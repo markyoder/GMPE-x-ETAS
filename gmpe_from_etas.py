@@ -8,7 +8,6 @@ Created on Fri Apr  1 13:32:06 2016
 import numpy as np
 import itertools
 import matplotlib.pyplot as plt
-import pickle
 import time
 import rtree
 from rtree import index
@@ -98,7 +97,7 @@ dists = {}
 for line1 in ETAS_rec:
     lon1 = round(line1['x'],1)
     lat1 = round(line1['y'],1)
-    M = 
+    M = '''TODO: Mapping from ETAS rate to source magnitude, we might need data for each region's background seismicity'''
     for i, line2 in enumerate(GMPE_rec):
         lon2 = round(line2['x'],1)
         lat2 = round(line2['y'],1)
@@ -115,9 +114,7 @@ t1 = time.time()
 print t1 - t0
 
 
-f = open('GMPE_rec.p', 'w')
-np.dump(GMPE_rec, f)
-f.close()
+GMPE_rec.dump('GMPE_rec.p')
 
 
 
