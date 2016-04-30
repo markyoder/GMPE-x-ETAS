@@ -10,6 +10,7 @@ Created on Fri Apr  1 13:32:06 2016
 """
 
 import numpy as np
+import math
 import itertools
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -99,6 +100,8 @@ def etas_to_GM(etas_src='../globalETAS/etas_outputs/etas_xyz.xyz', fname_out='GM
 	#xyz = open('../globalETAS/etas_outputs/etas_xyz.xyz', 'r')
 	#
 	#
+	print('open etas_src file: ', etas_src)
+	#
 	with open(etas_src, 'r') as xyz:
 		# i don't know why, except maybe because it does handle exceptions/crashes before the file is closed, but this
 		# "open()" syntax seems to be recommended over open(), close() implicit blocks.
@@ -122,6 +125,8 @@ def etas_to_GM(etas_src='../globalETAS/etas_outputs/etas_xyz.xyz', fname_out='GM
 
 		#xyz.close()
 	#
+	print('etas_src loaded. load data into arrays and process.')
+	#
 	# this syntax burns memory and time, which will become important later. instead of x.transopse(), we can use zip(*x)... unless
 	# it is otherwise known that zip(*x) is slow.
 	#ETAS_array = np.array(ETAS_array)
@@ -132,22 +137,35 @@ def etas_to_GM(etas_src='../globalETAS/etas_outputs/etas_xyz.xyz', fname_out='GM
 	#GMPE_rec = np.core.records.fromarrays(GMPE_array.transpose(), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
 	GMPE_rec = np.core.records.fromarrays(zip(*GMPE_array), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
 	#
+	l_etas = len(ETAS_rec)
+	#
 	t0 = time.time()
 	dists = {}
-	for line1 in ETAS_rec:
+	# how do we parallelize this? i think first, we want to use iterools(), so we can break up the whole nested loop into one list.
+	# we can avoid doing extra arithmetic by doing the round() operations first -- loop over [[round(x), round(y), z], ...]
+	# and calc the source magnitude, again, in the first loop  over the ETAS array. at that point, all the rows are independent and
+	# we can parse them out to processes.
+	for j,line1 in enumerate(ETAS_rec):
 		lon1 = round(line1['x'],1)
 		lat1 = round(line1['y'],1)
 		M = '''TODO: Mapping from ETAS rate to source magnitude, we might need data for each region's background seismicity'''
 		M=2.0
+		print('line: %d/%d' % (j,l_etas))
+		#
 		for i, line2 in enumerate(GMPE_rec):
 			lon2 = round(line2['x'],1)
 			lat2 = round(line2['y'],1)
 			#
 			# note: this can be an expensie operation. for speed optimization, i think there is a "use spherical solution" option
-			#    (by default, this uses an iterative algorithm), or we can code in the exact spherical solution (i have it in one or
-			#    more ETAS code).
-			g = Geodesic.WGS84.Inverse(lat1, lon1, lat2, lon2)
-			distance = g['s12']
+			#    (by default, this uses an iterative algorithm), or we can code in the exact spherical solution. globalETAS includes a
+			#    pretty comprehensive handling of distances and distance types. for now, let's implement a simple version. cut-and-paste
+			#    the spherical solution, and switch it out here (i think it's fair enough to say now that we'll need something simple and
+			#    fast, so geographiclib is probably out of the question).
+			#
+			#spherical_dist(lon_lat_from=[0., 0.], lon_lat_to=[0.,0.], Rearth = 6378.1):
+			distance = spherical_dist(lon_lat_from=[lon1, lat1], lon_lat_to=[lon2, lat2])
+			#g = Geodesic.WGS84.Inverse(lat1, lon1, lat2, lon2)
+			#distance = g['s12']
 			#	
 			#S_Horiz_Soil_Acc = Y(distance, M, "PGA-soil")
 			S_Horiz_Soil_Acc = f_Y(distance, M, motion_type)
@@ -158,6 +176,45 @@ def etas_to_GM(etas_src='../globalETAS/etas_outputs/etas_xyz.xyz', fname_out='GM
 	print(t1 - t0)
 	#
 	GMPE_rec.dump(fname_out)
+
+
+def spherical_dist(lon_lat_from=[0., 0.], lon_lat_to=[0.,0.], Rearth = 6378.1):
+	# Geometric spherical distance formula...
+	# displacement from inloc...
+	# inloc is a vector [lon, lat]
+	# return a vector [dLon, dLat] or [r, theta]
+	# return distances in km.
+	#
+	# also, we need to get the proper spherical angular displacement (from the parallel)
+	#
+	#Rearth = 6378.1	# km
+	deg2rad=2.0*math.pi/360.
+	#
+	# note: i usually use phi-> longitude, lambda -> latitude, but at some point i copied a source where this is
+	# reversed. oops. so just switch them here.
+	# phi: latitude
+	# lon: longitude
+	#
+	#phif  = inloc[0]*deg2rad
+	#lambf = inloc[1]*deg2rad
+	#phis  = self.loc[0]*deg2rad
+	#lambs = self.loc[1]*deg2rad
+	
+	phif  = lon_lat_to[1]*deg2rad
+	lambf = lon_lat_to[0]*deg2rad
+	phis  = lon_lat_from[1]*deg2rad
+	lambs = lon_lat_from[0]*deg2rad
+	#
+	#print ('phif: ', phif)
+	#print('lambf: ', lambf)
+	#
+	dphi = (phif - phis)
+	dlambda = (lambf - lambs)
+	#this one is supposed to be bulletproof:
+	sighat3 = math.atan( math.sqrt((math.cos(phif)*math.sin(dlambda))**2.0 + (math.cos(phis)*math.sin(phif) - math.sin(phis)*math.cos(phif)*math.cos(dlambda))**2.0 ) / (math.sin(phis)*math.sin(phif) + math.cos(phis)*math.cos(phif)*math.cos(dlambda))  )
+	R3 = Rearth * sighat3
+	#
+	return R3
 
 # yoder: let's code this up for both command line and interactive use:
 if __name__=='__main__':
