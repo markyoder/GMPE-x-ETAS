@@ -15,6 +15,8 @@ import itertools
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import time
+import multiprocessing as mpp
+#
 import rtree
 from rtree import index
 from geographiclib.geodesic import Geodesic
@@ -95,9 +97,10 @@ def Y(R, M, motiontype):
         
     return 10**(a*M + b*(np.sqrt(R**2+9) + C(M, c1, c2)) + d*np.log10(np.sqrt(R**2+9) + C(M, c1, c2)) + e)
 #
-def etas_to_GM(etas_src='../globalETAS/etas_outputs/etas_xyz.xyz', fname_out='GMPE_rec.p', motion_type='PGA-soil'):
+def etas_to_GM(etas_src='../globalETAS/etas_outputs/etas_xyz.xyz', fname_out='GMPE_rec.p', motion_type='PGA-soil', n_procs=None):
 	# "ETAS to Ground-Motion:
 	#xyz = open('../globalETAS/etas_outputs/etas_xyz.xyz', 'r')
+	n_procs=(n_procs or mpp.cpu_count())
 	#
 	#
 	print('open etas_src file: ', etas_src)
@@ -106,23 +109,17 @@ def etas_to_GM(etas_src='../globalETAS/etas_outputs/etas_xyz.xyz', fname_out='GM
 		# i don't know why, except maybe because it does handle exceptions/crashes before the file is closed, but this
 		# "open()" syntax seems to be recommended over open(), close() implicit blocks.
 		#
-		lons = []
-		lats = []
-		etasVals = []
-		#
 		ETAS_array = []
 		GMPE_array = []
-
-		for line in xyz:
-			line = line.split()
-			ETAS_array.append([line[0], line[1], line[2]])
-			GMPE_array.append([line[0], line[1], 0])
-			if float(line[0]) not in lons:
-				lons.append(float(line[0]))
-			if float(line[1]) not in lats:
-				lats.append(float(line[1]))
-			etasVals.append(float(line[2]))
-
+		#
+		#ETAS_array = [[float(x), float(y), float(z)] for x,y,z in xyz]
+		ETAS_array = [[float(x) for x in rw.split()] for rw in xyz if not rw[0] in ('#', chr(32), chr(10), chr(13), chr(9))]
+		#
+	#
+	GMPE_array = [[x,y,0.] for x,y,z in ETAS_array]
+	lons = sorted(list(set([x for x,y,z in ETAS_array])))
+	lats = sorted(list(set([y for x,y,z in ETAS_array])))
+	#
 		#xyz.close()
 	#
 	print('etas_src loaded. load data into arrays and process.')
@@ -140,44 +137,94 @@ def etas_to_GM(etas_src='../globalETAS/etas_outputs/etas_xyz.xyz', fname_out='GM
 	l_etas = len(ETAS_rec)
 	#
 	t0 = time.time()
-	dists = {}
 	# how do we parallelize this? i think first, we want to use iterools(), so we can break up the whole nested loop into one list.
 	# we can avoid doing extra arithmetic by doing the round() operations first -- loop over [[round(x), round(y), z], ...]
 	# and calc the source magnitude, again, in the first loop  over the ETAS array. at that point, all the rows are independent and
 	# we can parse them out to processes.
-	for j,line1 in enumerate(ETAS_rec):
-		lon1 = round(line1['x'],1)
-		lat1 = round(line1['y'],1)
-		M = '''TODO: Mapping from ETAS rate to source magnitude, we might need data for each region's background seismicity'''
-		M=2.0
-		print('line: %d/%d' % (j,l_etas))
+	#
+	m_reff=0.
+	#
+	if n_procs>1 and False:
 		#
-		for i, line2 in enumerate(GMPE_rec):
-			lon2 = round(line2['x'],1)
-			lat2 = round(line2['y'],1)
+		# multi-process.
+		P = mpp.pool(n_procs)
+		#
+		# so we'll need to write calc_gmps() (aka, copy the single process bit). re
+		#resultses = [P.apply_async(calc_gmps, (), {etas_ary = ETAS_rec[j:j+proc_len], gmp_ary=GMPE_rec, ...}) for j_p in range(n_procs)]
+		P.close()
+		#
+		for j,res in enumerate(resultses):
+			GMPE_array['z']+=numpy.array(res.get())
+		#
+		# look in vc_parser for proper syntax using Pool() objects with close() and join().
+		#P.join()
+	#
+	if n_procs==1 or True:
+		j_prev=0
+		for (j, (lon1, lat1, z_e)), (k, (lon2, lat2, z_g)) in itertools.product(enumerate(ETAS_rec), enumerate(GMPE_rec)):
+			# M=rate_to_m(z_e)
+			if j!=j_prev:
+				print('new row: ', j)
+				j_prev=j
 			#
-			# note: this can be an expensie operation. for speed optimization, i think there is a "use spherical solution" option
-			#    (by default, this uses an iterative algorithm), or we can code in the exact spherical solution. globalETAS includes a
-			#    pretty comprehensive handling of distances and distance types. for now, let's implement a simple version. cut-and-paste
-			#    the spherical solution, and switch it out here (i think it's fair enough to say now that we'll need something simple and
-			#    fast, so geographiclib is probably out of the question).
+			M = m_from_rate(z_e, m_reff)
+			#M = 2.0
 			#
-			#spherical_dist(lon_lat_from=[0., 0.], lon_lat_to=[0.,0.], Rearth = 6378.1):
 			distance = spherical_dist(lon_lat_from=[lon1, lat1], lon_lat_to=[lon2, lat2])
 			#g = Geodesic.WGS84.Inverse(lat1, lon1, lat2, lon2)
 			#distance = g['s12']
 			#	
 			#S_Horiz_Soil_Acc = Y(distance, M, "PGA-soil")
 			S_Horiz_Soil_Acc = f_Y(distance, M, motion_type)
+			GMPE_rec['z'][k] = max(GMPE_rec['z'][k], S_Horiz_Soil_Acc)
+		#
+		'''	
+		for j,line1 in enumerate(ETAS_rec):
+			lon1 = round(line1['x'],1)
+			lat1 = round(line1['y'],1)
+			M = #TODO: Mapping from ETAS rate to source magnitude, we might need data for each region's background seismicity
+			M=2.0
+			print('line: %d/%d' % (j,l_etas))
 			#
-			GMPE_rec[i]['z'] = max(GMPE_rec[i]['z'], S_Horiz_Soil_Acc)
+			for i, line2 in enumerate(GMPE_rec):
+				lon2 = round(line2['x'],1)
+				lat2 = round(line2['y'],1)
+				#
+				# geographic_lib distances can be expensive, so let's try this spherical formula for starters...
+				#spherical_dist(lon_lat_from=[0., 0.], lon_lat_to=[0.,0.], Rearth = 6378.1):
+				distance = spherical_dist(lon_lat_from=[lon1, lat1], lon_lat_to=[lon2, lat2])
+				#g = Geodesic.WGS84.Inverse(lat1, lon1, lat2, lon2)
+				#distance = g['s12']
+				#	
+				#S_Horiz_Soil_Acc = Y(distance, M, "PGA-soil")
+				S_Horiz_Soil_Acc = f_Y(distance, M, motion_type)
+				#
+				GMPE_rec[i]['z'] = max(GMPE_rec[i]['z'], S_Horiz_Soil_Acc)
+			'''
 	#
 	t1 = time.time()
 	print(t1 - t0)
 	#
 	GMPE_rec.dump(fname_out)
 
+def calc_GMPE(lon1, lat1, lon2, lat2, z_etas, m_reff):
+	m_reff=0.
+	M = m_from_rate(z_e, m_reff)
+	#M = 2.0
+	#
+	distance = spherical_dist(lon_lat_from=[lon1, lat1], lon_lat_to=[lon2, lat2])
+	#g = Geodesic.WGS84.Inverse(lat1, lon1, lat2, lon2)
+	#distance = g['s12']
+	#	
+	S_Horiz_Soil_Acc = f_Y(distance, M, motion_type)
+	GMPE_rec['z'][k] = max(GMPE_rec['z'][k], S_Horiz_Soil_Acc)
 
+def m_from_rate(rate=None, m_reff=0.):
+	# compute a source magnitude based on ETAS rate and a reference magnitude (or something).
+	#
+	# but for now, just a constant
+	return 2.0
+#
 def spherical_dist(lon_lat_from=[0., 0.], lon_lat_to=[0.,0.], Rearth = 6378.1):
 	# Geometric spherical distance formula...
 	# displacement from inloc...
