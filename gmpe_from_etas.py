@@ -16,6 +16,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import time
 import multiprocessing as mpp
+import os
 #
 import rtree
 from rtree import index
@@ -130,9 +131,15 @@ def etas_to_GM(etas_src='../globalETAS/etas_outputs/etas_xyz.xyz', fname_out='GM
 	#ETAS_rec = np.core.records.fromarrays(ETAS_array.transpose(), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
 	ETAS_rec = np.core.records.fromarrays(zip(*ETAS_array), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
 	#
+	# so what are the parameters? for now, assume we have a rectangular grid;
+	# define parameters from which to construct a GMPE array.
+	d_lon = lons[1]-lons[0]
+	d_lat = lats[1]-lats[0]		# maybe need something more robust than this, but it should do...
+	lon_range = (min(lons), max(lons)+d_lon, d_lon)
+	lat_range = (min(lats), max(lats)+d_lat, d_lat)
 	#GMPE_array = np.array(GMPE_array)
 	#GMPE_rec = np.core.records.fromarrays(GMPE_array.transpose(), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
-	GMPE_rec = np.core.records.fromarrays(zip(*GMPE_array), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
+	#GMPE_rec = np.core.records.fromarrays(zip(*GMPE_array), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
 	#
 	l_etas = len(ETAS_rec)
 	#
@@ -144,22 +151,37 @@ def etas_to_GM(etas_src='../globalETAS/etas_outputs/etas_xyz.xyz', fname_out='GM
 	#
 	m_reff=0.
 	#
-	if n_procs>1 and False:
+	if n_procs>1:
 		#
 		# multi-process.
-		P = mpp.pool(n_procs)
+		P = mpp.Pool(n_procs)
 		#
-		# so we'll need to write calc_gmps() (aka, copy the single process bit). re
-		#resultses = [P.apply_async(calc_gmps, (), {etas_ary = ETAS_rec[j:j+proc_len], gmp_ary=GMPE_rec, ...}) for j_p in range(n_procs)]
+		#we want to construct the GMP_{sub}_arrays at the process level, so we don't have to pipe the whole array to the process.
+		# note: the [[x,y], ...] part of the array is like:
+		# [[x,y] for x,y in itertools.product(np.arange(*lon_range), np.arange(*lat_range))]
+		#
+		#
+		# so we'll need to write calc_gmps() (aka, copy the single process bit).
+		chunk_size = int(np.ceil(l_etas/n_procs))		# "chunk" size, or length of sub-arrays for parallel processing.
+		
+		resultses = [P.apply_async(calc_GMPEs, (), {'ETAS_rec':ETAS_rec[j_p*chunk_size:(j_p+1)*chunk_size], 'lon_range':lon_range, 'lat_range':lat_range, 'm_reff':5.0, 'just_z':True}) for j_p in range(n_procs)]
+		
 		P.close()
 		#
-		for j,res in enumerate(resultses):
-			GMPE_array['z']+=numpy.array(res.get())
+		# not sure of this syntax just yet. it is admittedly a little bit convoluted. it might be better to just suck it up and
+		# do an extra loop through the array: set up the zero-value initial array, then add all the returns. here, we're trying to
+		# squeeze out a little bit of performance by setting up the array and the first results simultaneously.
+		GMP_rec = np.core.records.fromarrays(zip(*[[x,y,z] for (x,y),z in zip(itertools.product(np.arange(*lon_range), np.arange(*lat_range)), resultses[0].get())]), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
+		for j,res in enumerate(resultses[1:]):
+			GMPE_rec['z']+=np.array(res.get()['z'])
+			pass
 		#
 		# look in vc_parser for proper syntax using Pool() objects with close() and join().
 		#P.join()
 	#
-	if n_procs==1 or True:
+	if n_procs==1:
+		GMPE_rec = calc_GMPEs(ETAS_rec=ETAS_rec, lat_range=None, lon_range=None)
+		'''
 		j_prev=0
 		for (j, (lon1, lat1, z_e)), (k, (lon2, lat2, z_g)) in itertools.product(enumerate(ETAS_rec), enumerate(GMPE_rec)):
 			# M=rate_to_m(z_e)
@@ -177,6 +199,8 @@ def etas_to_GM(etas_src='../globalETAS/etas_outputs/etas_xyz.xyz', fname_out='GM
 			#S_Horiz_Soil_Acc = Y(distance, M, "PGA-soil")
 			S_Horiz_Soil_Acc = f_Y(distance, M, motion_type)
 			GMPE_rec['z'][k] = max(GMPE_rec['z'][k], S_Horiz_Soil_Acc)
+		#
+		'''
 		#
 		'''	
 		for j,line1 in enumerate(ETAS_rec):
@@ -206,7 +230,42 @@ def etas_to_GM(etas_src='../globalETAS/etas_outputs/etas_xyz.xyz', fname_out='GM
 	print(t1 - t0)
 	#
 	GMPE_rec.dump(fname_out)
+#
 
+def calc_GMPEs(ETAS_rec=None, lat_range=None, lon_range=None, m_reff=5.0, motion_type="PGA-soil", just_z=False):
+	# what is the correct syntax to return a subset of columns of a recarray? (the fastest way, of course)?
+	#
+	# construct GMP array and calculate GM from ETAS. this function to be used as an mpp.Pool() worker.
+	#GMPE_rec =[[x,y,0.] for x,y in itertools.product(np.arange(*lon_range), np.arange(*lat_range))]	# check these for proper
+	#
+	# create an empty GMPE array.																		# sequenceing and grouping.
+	GMPE_rec = np.core.records.fromarrays(zip(*[[x,y,0.] for x,y in itertools.product(np.arange(*lon_range), np.arange(*lat_range))]), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
+	#GMPE_rec = np.core.records.fromarrays(zip(*GMPE_array), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
+	#
+	j_prev=0
+	for (j, (lon1, lat1, z_e)), (k, (lon2, lat2, z_g)) in itertools.product(enumerate(ETAS_rec), enumerate(GMPE_rec)):
+		# M=rate_to_m(z_e)
+		if j!=j_prev:
+			print('new row[{}]: {}'.format(os.getpid(), j))
+			j_prev=j
+		#
+		M = m_from_rate(z_e, m_reff)
+		#M = 2.0
+		#
+		distance = spherical_dist(lon_lat_from=[lon1, lat1], lon_lat_to=[lon2, lat2])
+		#g = Geodesic.WGS84.Inverse(lat1, lon1, lat2, lon2)
+		#distance = g['s12']
+		#	
+		#S_Horiz_Soil_Acc = Y(distance, M, "PGA-soil")
+		S_Horiz_Soil_Acc = f_Y(distance, M, motion_type)
+		GMPE_rec['z'][k] = max(GMPE_rec['z'][k], S_Horiz_Soil_Acc)
+	#
+	if just_z:
+		return GMP_rec['z']
+	else:
+		return GMPE_rec
+
+#
 def calc_GMPE(lon1, lat1, lon2, lat2, z_etas, m_reff):
 	m_reff=0.
 	M = m_from_rate(z_e, m_reff)
