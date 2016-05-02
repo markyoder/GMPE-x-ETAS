@@ -167,29 +167,56 @@ def etas_to_GM(etas_src='../globalETAS/etas_outputs/etas_xyz.xyz', fname_out='GM
 #
 def resize_interpolate(ary_in, new_size):
 	if hasattr(ary_in, 'dtype'):
-		lons = ary_in['x']
-		lats = ary_in['y']
+		lons = sorted(list(set(ary_in['x'])))
+		lats = sorted(list(set(ary_in['y'])))
 		zs   = ary_in['z']
 	else:
-		lons, lats, zs = (numpy.array(x) for x in (zip(*ary_in)))
+		lons, lats, zs = (numpy.array(sorted(list(set(x)))) for x in (zip(*ary_in)))
 	#	
 	new_lons = numpy.linspace(min(lons), max(lons), new_size[0])*numpy.pi/180.
-	new_lats = numpy.linspace(min(lats), max(lats), etas_size[1])*numpy.pi/180.
+	new_lats = numpy.linspace(min(lats), max(lats), new_size[1])*numpy.pi/180.
+	#return new_lons, new_lats
 	new_lats, new_lons = numpy.meshgrid(new_lats, new_lons)
 	#
-	data = numpy.array(zs]
-	data.shape=(len(lons), len(lats))		# or is it len(lats), len(lons)?
-	lut = RectSphereBivariateSpline(lats, lons, etas_data)
-	data_interp = lut.ev(new_lats.ravel(), new_lons.ravel()).reshape(new_size).T
+	data = numpy.array(zs)
+	data.shape=(numpy.size(lats), numpy.size(lons))		# or is it len(lats), len(lons) (yes, i think it is)
+	lut = RectSphereBivariateSpline(lats, lons, data)
+	data_interp = lut.ev(new_lats.ravel(), new_lons.ravel())
+	#data_interp = lut.ev(new_lats.ravel(), new_lons.ravel()).reshape(new_size).T
+	data_interp = data_interp.reshape((data_interp.size,))
+	#return data_interp
 	#
-	data_interp.shape((data_interp.size,))
 	#
-	return np.core.records.fromarrays(zip(*[[x,y,z] for (x,y),z in zip(itertools(lons, lats), data_interp)]), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
+	return np.core.records.fromarrays(zip(*[[x*180/numpy.pi,y*180/numpy.pi,z] for (x,y),z in zip(itertools.product(new_lons.reshape((new_lons.size,)), new_lats.reshape((new_lats.size,))), data_interp)]), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
 #
 def interpolation_test():
 	# a short unit-type test of the resize_interpolate() bit.
 	# borrowed from :
 	# http://docs.scipy.org/doc/scipy/reference/generated/scipy.interpolate.RectSphereBivariateSpline.html#scipy.interpolate.RectSphereBivariateSpline
+	lats = np.linspace(10, 170, 9) * np.pi / 180.
+	lons = np.linspace(0, 350, 18) * np.pi / 180.
+	data = np.dot(np.atleast_2d(90. - np.linspace(-80., 80., 18)).T, np.atleast_2d(180. - np.abs(np.linspace(0., 350., 9)))).T
+	#sh=data.shape
+	print('data shape: ', data.shape, data.size)
+	#return data
+	#data.shape=(data.size)
+	#
+	dtas = [[x,y,z] for (x,y),z in zip(itertools.product(lons, lats),numpy.reshape(data, numpy.size(data)))]
+	#
+	new_sh = (360, 180)
+	new_data = resize_interpolate(dtas, new_sh)
+	#print('nds: ', numpy.size(new_data.size))
+	#
+	img_data = new_data['z'].reshape(new_sh)
+	#
+	fig = plt.figure(0)
+	plt.clf()
+	ax1 = fig.add_subplot(211)
+	ax1.imshow(data, interpolation='nearest')
+	ax2 = fig.add_subplot(212)
+	ax2.imshow(img_data, interpolation='nearest')
+	plt.show()
+	#
 	pass
 
 #
