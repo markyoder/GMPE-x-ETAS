@@ -19,6 +19,7 @@ import time
 import multiprocessing as mpp
 import os
 from scipy.interpolate import RectSphereBivariateSpline
+from scipy.interpolate import RectBivariateSpline
 #
 import rtree
 from rtree import index
@@ -221,7 +222,7 @@ def interpolation_test():
 	plt.show()
 	#
 	pass
-def interpolation_test_2():
+def interpolation_test_2(fignum=0):
 	# this needs some tuning, but it appears to be working and semi-functional
 	# Suppose we have global data on a coarse grid
 	import numpy as np
@@ -239,16 +240,54 @@ def interpolation_test_2():
 	#lns = sorted(list(set([x for x,y,z in dtas])))
 	#lts = sorted(list(set([y for x,y,z in dtas])))
 	#
-	return interpolate2(dtas, (180,360), 1., 360., 1., 180.)
+	return interpolate2(dtas, (180,360), 1., 360., 1., 180., fignum=fignum)
 
+def interpolate_etas_test(etas_data='etas_src/etas_japan_20160419_2148CDT_xyz.xyz', fignum=0):
+	# load an etas (or other) data file, plot. interpolate to new lattice, plot again.
+	#
+	with open(etas_data) as fin:
+		xyz = [[float(x) for x in rw.split()] for rw in fin if rw[0] not in (chr(9), chr(13), chr(10), chr(32), '#')]
+		#
+	#
+	for j,(x,y,z) in enumerate(xyz): xyz[j][2]=numpy.log(z)
+	lons_in, lats_in = (sorted(list(set(col))) for col in list(zip(*xyz))[0:2])
+	#Z = numpy.array([numpy.log(z) for x,y,z in xyz])
+	Z = numpy.array([z for x,y,z in xyz])
+	#
+	#lons_in sorted(list(set([x for x,y,z in xyz])))
+	#lats_in = sorted(list(set([y for x,y,z in xyz])))
+	#
+	Z.shape=(len(lats_in), len(lons_in))
+	#Z=Z.transpose()
+	#
+	plt.figure(fignum)
+	plt.clf()
+	ax1 = plt.gca()
+	ax1.imshow(Z, interpolation='nearest')
+	#
+	# ... and i think this *should* work but it chucks an error. are the data too complex? not sequenced properly? maybe test with
+	# the 2D array that we know will plot properly.
+	data_interp = interpolate2(numpy.array(xyz), sz=(2.*Z.shape[0], 2.*Z.shape[1]), fignum=2)
+	#
+	return data_interp
+	
+	
 def interpolate2(data,sz, lon1=None, lon2=None, lat1=None, lat2=None, fignum=None):
 	# this needs some tuning, but it appears to be working and semi-functional
+	#
+	print('data: ', data[0:5])
 	#
 	lons = sorted(list(set([x for x,y,z in data])))
 	lats = sorted(list(set([y for x,y,z in data])))
 	#print('lls: ', len(lats), len(lons))
 	data = numpy.reshape([rw[2] for rw in data], (len(lats), len(lons)))
 	#print('sh: ', numpy.shape(data))
+	#####
+	plt.figure(fignum+2)
+	plt.clf()
+	ax1 = plt.gca()
+	ax1.imshow(data, interpolation='nearest')
+	#####
 	#
 	lon1 = (lon1 or min(lons))
 	lon2 = (lon2 or max(lons))
@@ -264,19 +303,21 @@ def interpolate2(data,sz, lon1=None, lon2=None, lat1=None, lat2=None, fignum=Non
 	# We need to set up the interpolator object
 
 	#from scipy.interpolate import RectSphereBivariateSpline
-	lut = RectSphereBivariateSpline(lats, lons, data)
+	#lut = RectSphereBivariateSpline(lats, lons, data)
+	#
+	lut = RectBivariateSpline(lats, lons, data)
+	print(len(new_lats), len(new_lons[0]), len(data), len(data[0]), new_lats.shape)
 
 	# Finally we interpolate the data.  The `RectSphereBivariateSpline` object
 	# only takes 1-D arrays as input, therefore we need to do some reshaping.
 
-	data_interp = lut.ev(new_lats.ravel(),
-		                 new_lons.ravel()).reshape((360, 180)).T
+	data_interp = lut.ev(new_lats.ravel(), new_lons.ravel()).reshape(new_lats.shape).T
 
 	# Looking at the original and the interpolated data, one can see that the
 	# interpolant reproduces the original data very well:
 	#
 	if fignum!=None:
-		fig = plt.figure()
+		fig = plt.figure(fignum+0)
 		ax1 = fig.add_subplot(211)
 		ax1.imshow(data, interpolation='nearest')
 		ax2 = fig.add_subplot(212)
@@ -308,9 +349,10 @@ def interpolate2(data,sz, lon1=None, lon2=None, lat1=None, lat2=None, fignum=Non
 		fig2 = plt.figure(fignum+1)
 		s = [3e9, 2e9, 1e9, 1e8]
 		for ii in range(len(s)):
-			lut = RectSphereBivariateSpline(lats, lons, data, s=s[ii])
+			#lut = RectSphereBivariateSpline(lats, lons, data, s=s[ii])
+			RectBivariateSpline(lats, lons, data, s=s[ii])
 			data_interp = lut.ev(new_lats.ravel(),
-				                 new_lons.ravel()).reshape((360, 180)).T
+				                 new_lons.ravel()).reshape(new_lons.shape).T
 			ax = fig2.add_subplot(2, 2, ii+1)
 			ax.imshow(data_interp, interpolation='nearest')
 			ax.set_title("s = %g" % s[ii])
