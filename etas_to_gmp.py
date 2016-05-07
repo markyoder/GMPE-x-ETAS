@@ -10,6 +10,7 @@ Created on Fri Apr  1 13:32:06 2016
 """
 #
 import numpy as np
+import scipy
 numpy = np		# i always write "numpy"; let's just catch it here.
 import math
 import itertools
@@ -242,12 +243,16 @@ def interpolation_test_2(fignum=0):
 	#
 	return interpolate2(dtas, (180,360), 1., 360., 1., 180., fignum=fignum)
 
-def interpolate_etas_test(etas_data='etas_src/etas_japan_20160419_2148CDT_xyz.xyz', fignum=0):
+def interpolate_etas_test(etas_data='etas_src/etas_japan_20160419_2148CDT_xyz.xyz', new_size=.5, img_interp='nearest', fignum=0):
 	# load an etas (or other) data file, plot. interpolate to new lattice, plot again.
+	# img_interp: interpretation style for plt.imshow(), basically just for show (not part of the actual interpolation algorithm(s).
+	#            options include (‘none’, ‘nearest’, ‘bilinear’, ‘bicubic’, ‘spline16’, ‘spline36’, ‘hanning’, ‘hamming’, ‘hermite’, ‘kaiser’, ‘quadric’, ‘catrom’, ‘gaussian’, ‘bessel’, ‘mitchell’, ‘sinc’, ‘lanczos’)
 	#
 	with open(etas_data) as fin:
 		xyz = [[float(x) for x in rw.split()] for rw in fin if rw[0] not in (chr(9), chr(13), chr(10), chr(32), '#')]
 		#
+	#
+	print('size: ', len(xyz))
 	#
 	for j,(x,y,z) in enumerate(xyz): xyz[j][2]=numpy.log(z)
 	lons_in, lats_in = (sorted(list(set(col))) for col in list(zip(*xyz))[0:2])
@@ -260,20 +265,73 @@ def interpolate_etas_test(etas_data='etas_src/etas_japan_20160419_2148CDT_xyz.xy
 	Z.shape=(len(lats_in), len(lons_in))
 	#Z=Z.transpose()
 	#
-	plt.figure(fignum)
-	plt.clf()
-	ax1 = plt.gca()
-	ax1.imshow(Z, interpolation='nearest')
+	if fignum!=None:
+		plt.figure(fignum)
+		plt.clf()
+		ax1 = plt.gca()
+		ax1.imshow(Z, interpolation=img_interp)
+		plt.title('etas test, input data.')
 	#
 	# ... and i think this *should* work but it chucks an error. are the data too complex? not sequenced properly? maybe test with
 	# the 2D array that we know will plot properly.
-	data_interp = interpolate2(numpy.array(xyz), sz=(2.*Z.shape[0], 2.*Z.shape[1]), fignum=2)
+	#data_interp = interpolate_RSBS(numpy.array(xyz), sz=(2.*Z.shape[0], 2.*Z.shape[1]), fignum=2)
+	#
+	# ... but this works quite nicely (using the scipy.interpolate.interp2d() method.
+	data_interp = interpolate_scipy(numpy.array(xyz), new_size=new_size, fignum=2)
 	#
 	return data_interp
+
+def interpolate_scipy(data,new_size=.5, interp_type='cubic', lon1=None, lon2=None, lat1=None, lat2=None, fignum=None):
+	lons = sorted(list(set([x for x,y,z in data])))
+	lats = sorted(list(set([y for x,y,z in data])))
+	#
+	#print('lls: ', len(lats), len(lons))
+	Zs = numpy.reshape([rw[2] for rw in data], (len(lats), len(lons)))
+	# we can pass new_size as an array of the new size/shape, or we can pass a number and scale the existing data.
+	if isinstance(new_size,int): new_size=float(new_size)
+	if isinstance(new_size,float): new_size=[new_size*x for x in Zs.shape]
+	#
+	#####
+	if fignum!=None:
+		fg=plt.figure(fignum, fig_size=(5,10))
+		plt.clf()
+		ax1 = fg.add_axes([.1,.08,.8,.4])
+		ax2 = fg.add_axes([.1,.5, .8,.4])
+		#
+		ax1.imshow(Zs, interpolation='nearest')
+		#
+		#plt.title('interpolate(d)_scipy')
+		ax1.set_title('original')
+		ax2.set_title('interpolate(d)_scipy')
+	#####
+	#
+	lon1 = (lon1 or min(lons))
+	lon2 = (lon2 or max(lons))
+	lat1 = (lat1 or min(lats))
+	lat2 = (lat2 or max(lats))
+	#
+	new_lats = np.linspace(lat1, lat2, new_size[0])
+	new_lons = np.linspace(lon1, lon2, new_size[1])
+	#new_lats, new_lons = np.meshgrid(new_lats, new_lons)
+	#
+	f_int = scipy.interpolate.interp2d(lons, lats, Zs, kind=interp_type)
+	Zs_new = f_int(new_lons, new_lats)
+	#
+	if fignum!=None:
+		ax2.imshow(Zs_new, interpolation='nearest')
+		#
+	#
+	print('shapes: ', new_lons.shape, new_lats.shape, Zs_new.shape, Zs_new.size)
+	
+	return numpy.array(list(zip((numpy.reshape(X, (X.size,)) for X in (new_lons, new_lats, Zs_new)))))
 	
 	
-def interpolate2(data,sz, lon1=None, lon2=None, lat1=None, lat2=None, fignum=None):
+def interpolate_RSBS(data,sz, lon1=None, lon2=None, lat1=None, lat2=None, fignum=None):
+	# interpolate using scipy.interpolate.RectSphereBivariateSpline
+	#
 	# this needs some tuning, but it appears to be working and semi-functional
+	# ... but tends to break for complex array. let's try scipy.interp2d():
+	#http://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.interpolate.interp2d.html
 	#
 	print('data: ', data[0:5])
 	#
@@ -303,9 +361,9 @@ def interpolate2(data,sz, lon1=None, lon2=None, lat1=None, lat2=None, fignum=Non
 	# We need to set up the interpolator object
 
 	#from scipy.interpolate import RectSphereBivariateSpline
-	#lut = RectSphereBivariateSpline(lats, lons, data)
+	lut = RectSphereBivariateSpline(lats, lons, data)
 	#
-	lut = RectBivariateSpline(lats, lons, data)
+	#lut = RectBivariateSpline(lats, lons, data)
 	print(len(new_lats), len(new_lons[0]), len(data), len(data[0]), new_lats.shape)
 
 	# Finally we interpolate the data.  The `RectSphereBivariateSpline` object
