@@ -50,10 +50,14 @@ motion_type_prams = {key:{ky:vl for ky,vl in zip(motion_type_prams_lst_vars, val
 def f_Y(R,M, a=None, b=None, c1=None, c2=None, d=None, e=None, motion_type='PGA-soil'):
 	# experimenting a bit with this quasi-recursive call structure. this approach might be slow, and maybe we should just separate this into
 	# two separate functions.
+	# from original implementation; Y() should (nominally) look like this:
+	# return 10**(a*M + b*(np.sqrt(R**2+9) + C(M, c1, c2)) + d*np.log10(np.sqrt(R**2+9) + C(M, c1, c2)) + e)
 	if motion_type!=None:
 		return f_Y(R,M, motion_type=None, **motion_type_prams[motion_type])
 	else:
 		return 10**(a*M + b*(np.sqrt(R**2+9) + C(M, c1, c2)) + d*np.log10(np.sqrt(R**2+9) + C(M, c1, c2)) + e)
+		# it might be a little bit faster to calculate it this way:
+		#return (10**(a*M + b*(np.sqrt(R**2+9) + C(M, c1, c2)) + e)) * (np.sqrt(R**2+9) + C(M, c1, c2))**d
 
 def C(M, c1, c2):
     return c1*np.exp(c2*(M-5))*(np.arctan(M-5)+np.pi/2.0)

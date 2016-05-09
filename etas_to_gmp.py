@@ -27,7 +27,8 @@ from rtree import index
 from geographiclib.geodesic import Geodesic
 #
 # define the color-cycle for fancy plotting:
-_colors =  mpl.rcParams['axes.color_cycle']
+#_colors =  mpl.rcParams['axes.color_cycle']
+_colors = ('b', 'g', 'r', 'c', 'm', 'y', 'k')
 #
 #==============================================================================
 # Extended Magnitude range attenuation relationships for S-wave horizontal acceleration
@@ -62,7 +63,7 @@ def f_Y(R,M, a=None, b=None, c1=None, c2=None, d=None, e=None, motion_type='PGA-
 def C(M, c1, c2):
     return c1*np.exp(c2*(M-5))*(np.arctan(M-5)+np.pi/2.0)
 #
-def etas_to_GM(etas_src='../globalETAS/etas_outputs/etas_xyz.xyz', fname_out='GMPE_rec.p', motion_type='PGA-soil', etas_size=None, gmp_size=None, n_procs=None):
+def etas_to_GM(etas_src='etas_src/etas_japan_20160419_2148CDT_xyz.xyz', fname_out='GMPE_rec.p', motion_type='PGA-soil', etas_size=None, gmp_size=None, n_procs=None):
 	# "ETAS to Ground-Motion:
 	# etas_size: if None, use raw data as they are. otherwise, re-size the lattice using scipy interpolation tools (grid_data() i think)
 	# gmp_size: if None, use raw (etas) data size, otherwise, create a grid... and for these two variables, we need to decide if we want
@@ -72,19 +73,11 @@ def etas_to_GM(etas_src='../globalETAS/etas_outputs/etas_xyz.xyz', fname_out='GM
 	#xyz = open('../globalETAS/etas_outputs/etas_xyz.xyz', 'r')
 	n_procs=(n_procs or mpp.cpu_count())	
 	#
-	#
 	print('open etas_src file: ', etas_src)
 	#
-	with open(etas_src, 'r') as xyz:
-		# i don't know why, except maybe because it does handle exceptions/crashes before the file is closed, but this
-		# "open()" syntax seems to be recommended over open(), close() implicit blocks.
-		#
-		ETAS_array = []
-		GMPE_array = []
-		#
-		#ETAS_array = [[float(x), float(y), float(z)] for x,y,z in xyz]
-		ETAS_array = [[float(x) for x in rw.split()] for rw in xyz if not rw[0] in ('#', chr(32), chr(10), chr(13), chr(9))]
-		#
+	ETAS_array = open_xyz_file(etas_src)
+	ETAS_array['z']=numpy.log(ETAS_array['z'])
+	#
 	lons = sorted(list(set([x for x,y,z in ETAS_array])))
 	lats = sorted(list(set([y for x,y,z in ETAS_array])))
 	#
@@ -93,28 +86,32 @@ def etas_to_GM(etas_src='../globalETAS/etas_outputs/etas_xyz.xyz', fname_out='GM
 	# 
 	# are we re-sizing the lattice? for most cases, we can probably use a cartesian approximation, but scipy happens to have a
 	# cartesian-spherical (aka, lat/lon) interpolator:
-	# scipy.interpolate.RectSphereBivariateSpline
+	# scipy.interpolate.RectSphereBivariateSpline... which breaks for complex data sets, like ETAS maps.
+	# however, scipy.interpolate.interp2d works well.
 	#
-	if isinstance(etas_size,int) or isinstance(etas_size,float): etas_size=(etas_size, etas_size)
-	if isinstance(gmp_size,int) or isinstance(gmp_size,float): gmp_size=(gmp_size, gmp_size)
+	# interpolate_scipy() handles the size variable as follows: list-like are interpreted as the new shape;
+	# scalar-like are interpreted as a factor, new_size=(size*size[0], size*size[1])
+	#if isinstance(etas_size,int) or isinstance(etas_size,float): etas_size=(etas_size, etas_size)
+	#if isinstance(gmp_size,int) or isinstance(gmp_size,float): gmp_size=(gmp_size, gmp_size)
 	#
-	if etas_size == None: etas_size=ETAS_array.shape()
+	#
+	if etas_size == None: etas_size=(len(lons), len(lats))
 	if gmp_size  == None: gmp_size=etas_size
 	#
-	if not tuple(etas_size)==tuple(ETAS_array.shape()) and False:
+	print('ETAS_array, size: {}, shape: {}/{}'.format(ETAS_array.size, ETAS_array.shape, etas_size))
+	if not tuple(etas_size)==tuple(ETAS_array.shape):
 		# we're resizing and interpolating.
-		ETAS_array = resize_interpolate(ETAS_array, etas_size)
+		# note: i think an easier way to interpolate is to use PIL. load data into an "image" object img and use img.thumbnail(sz, opts...)
+		ETAS_array = interpolate_scipy(ETAS_array, etas_size, fignum=0)
+		#print('New ETAS_array, size: {}, shape: {}'.format(ETAS_array.size, ETAS_array.shape))
 		#
-	#
-	##############
-	#
-	GMPE_array = [[x,y,0.] for x,y,z in ETAS_array]
-	#
-		#xyz.close()
-	#
-	print('etas_src loaded. load data into arrays and process.')
+		lons = sorted(list(set([x for x,y,z in ETAS_array])))
+		lats = sorted(list(set([y for x,y,z in ETAS_array])))
+	if isinstance(gmp_size,int) or isinstance(gmp_size,float): gmp_size=[gmp_size*x for x in etas_size]
+	print('GMP_size: {}/{}'.format(gmp_size, etas_size))
 	#
 	ETAS_rec = np.core.records.fromarrays(zip(*ETAS_array), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
+	#GMPE_rec = [[x,y,0] for x,y in itertools.product(numpy.linspace(min(lons), max(lons), gmp_size[0]), numpy.linspace(min(lats), max(lats), gmp_size[1]))]
 	#
 	# so what are the parameters? for now, assume we have a rectangular grid;
 	# define parameters from which to construct a GMPE array.
@@ -123,6 +120,11 @@ def etas_to_GM(etas_src='../globalETAS/etas_outputs/etas_xyz.xyz', fname_out='GM
 	lon_range = (min(lons), max(lons)+d_lon, d_lon)
 	lat_range = (min(lats), max(lats)+d_lat, d_lat)
 	l_etas = len(ETAS_rec)
+	#
+	#d_lat_gmp = (max(lats)-min(lats))/gmp_size[1]
+	#d_lon_gmp = (max(lons)-min(lons))/gmp_size[0]
+	gmp_lat_range = (min(lats), max(lats), gmp_size[1])
+	gmp_lon_range = (min(lons), max(lons), gmp_size[0])
 	#
 	t0 = time.time()
 	#
@@ -143,106 +145,93 @@ def etas_to_GM(etas_src='../globalETAS/etas_outputs/etas_xyz.xyz', fname_out='GM
 		#
 		# so we'll need to write calc_gmps() (aka, copy the single process bit).
 		chunk_size = int(np.ceil(l_etas/n_procs))		# "chunk" size, or length of sub-arrays for parallel processing.
-		
-		resultses = [P.apply_async(calc_GMPEs, (), {'ETAS_rec':ETAS_rec[j_p*chunk_size:(j_p+1)*chunk_size], 'lon_range':lon_range, 'lat_range':lat_range, 'm_reff':5.0, 'just_z':True}) for j_p in range(n_procs)]
-		
+		#
+		# pass part of ETAS; distribute and return a full GMPE_rec[] from each process.
+		resultses = [P.apply_async(calc_max_GMPEs, (), {'ETAS_rec':ETAS_rec[j_p*chunk_size:(j_p+1)*chunk_size], 'lon_range':gmp_lon_range, 'lat_range':gmp_lat_range, 'm_reff':5.0, 'just_z':True}) for j_p in range(n_procs)]
+		#
 		P.close()
+		P.join()
 		#
 		# not sure of this syntax just yet. it is admittedly a little bit convoluted. it might be better to just suck it up and
 		# do an extra loop through the array: set up the zero-value initial array, then add all the returns. here, we're trying to
 		# squeeze out a little bit of performance by setting up the array and the first results simultaneously.
-		GMPE_rec = np.core.records.fromarrays(zip(*[[x,y,z] for (x,y),z in zip(itertools.product(np.arange(*lon_range), np.arange(*lat_range)), resultses[0].get())]), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
+		#GMPE_rec = np.core.records.fromarrays(zip(*[[x,y,z] for (x,y),z in zip(itertools.product(np.arange(*lon_range), np.arange(*lat_range)), resultses[0].get())]), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
+		GMPE_rec = np.core.records.fromarrays(zip(*[[x,y,z] for (x,y),z in zip(itertools.product(np.linspace(*gmp_lon_range), np.linspace(*gmp_lat_range)), resultses[0].get())]), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
 		for j,res in enumerate(resultses[1:]):
-			GMPE_rec['z']+=np.array(res.get()['z'])
+			GMPE_rec['z']+=np.array(res.get())
 			pass
 		#
 		# look in vc_parser for proper syntax using Pool() objects with close() and join().
 		#P.join()
 	#
 	if n_procs==1:
-		GMPE_rec = calc_GMPEs(ETAS_rec=ETAS_rec, lat_range=None, lon_range=None)
+		# there are different ways to calculate GMPE. just so we can get a number, let's just aggregate the output for now.
+		GMPE_rec = calc_max_GMPEs(ETAS_rec=ETAS_rec, lat_range=lat_range, lon_range=lon_range)
 	#
 	t1 = time.time()
 	print(t1 - t0)
 	#
-	GMPE_rec.dump(fname_out)
+	#GMPE_rec.dump(fname_out)
+	#
+	plot_xyz_image(GMPE_rec, fignum=4, cmap='hot')
+	
+	return GMPE_rec
 #
-def resize_interpolate(ary_in, new_size):
-	if hasattr(ary_in, 'dtype'):
-		lons = sorted(list(set(ary_in['x'])))
-		lats = sorted(list(set(ary_in['y'])))
-		zs   = ary_in['z']
+def calc_max_GMPEs(ETAS_rec=None, lat_range=None, lon_range=None, m_reff=5.0, motion_type="PGA-soil", just_z=False):
+	# what is the correct syntax to return a subset of columns of a recarray? (the fastest way, of course)?
+	#
+	# construct GMP array and calculate GM from ETAS. this function to be used as an mpp.Pool() worker.
+	#GMPE_rec =[[x,y,0.] for x,y in itertools.product(np.arange(*lon_range), np.arange(*lat_range))]	# check these for proper
+	#
+	# create an empty GMPE array.																		# sequenceing and grouping.
+	#GMPE_rec = np.core.records.fromarrays(zip(*[[x,y,0.] for x,y in itertools.product(np.arange(*lon_range), np.arange(*lat_range))]), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
+	GMPE_rec = np.core.records.fromarrays(zip(*[[x,y,0.] for x,y in itertools.product(np.linspace(*lon_range), np.linspace(*lat_range))]), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
+	#
+	j_prev=-1
+	for (j, (lon1, lat1, z_e)), (k, (lon2, lat2, z_g)) in itertools.product(enumerate(ETAS_rec), enumerate(GMPE_rec)):
+		# M=rate_to_m(z_e)
+		if j!=j_prev:
+			#print('new row[{}]: {}/{}'.format(os.getpid(), j,k))
+			j_prev=j
+		#
+		M = m_from_rate(z_e, m_reff)
+		#M = 2.0
+		#
+		distance = spherical_dist(lon_lat_from=[lon1, lat1], lon_lat_to=[lon2, lat2])
+		#g = Geodesic.WGS84.Inverse(lat1, lon1, lat2, lon2)
+		#distance = g['s12']
+		#	
+		#S_Horiz_Soil_Acc = Y(distance, M, "PGA-soil")
+		S_Horiz_Soil_Acc = f_Y(distance, M, motion_type)
+		#GMPE_rec['z'][k] = max(GMPE_rec['z'][k], S_Horiz_Soil_Acc)
+		
+		GMPE_rec['z'][k] = max(abs(GMPE_rec['z'][k]*numpy.exp(z_e)), abs(S_Horiz_Soil_Acc*numpy.exp(z_e)))		
+	#
+	#print('finished with GMPE_rec, len={}'.format(len(GMPE_rec)))
+	if just_z:
+		return GMPE_rec['z']
 	else:
-		lons, lats, zs= (numpy.array(sorted(list(set(x)))) for x in (zip(*ary_in)))
-		#print('lls: ', lons, lats)
-		zs = numpy.array([rw[2] for rw in ary_in])
-	#	 
-	new_lons = numpy.linspace(min(lons), max(lons), new_size[0])*numpy.pi/180.
-	new_lats = numpy.linspace(min(lats), max(lats), new_size[1])*numpy.pi/180.
-	#return new_lons, new_lats
-	new_lats, new_lons = numpy.meshgrid(new_lats, new_lons)
-	#
-	data = numpy.array(zs)
-	data.shape=(numpy.size(lats), numpy.size(lons))		# or is it len(lats), len(lons) (yes, i think it is)
-	lut = RectSphereBivariateSpline(lats, lons, data)
-	#data_interp = lut.ev(new_lats.ravel(), new_lons.ravel())
-	data_interp = lut.ev(new_lats.ravel(), new_lons.ravel()).reshape(new_size).T
-	data_interp = data_interp.reshape((data_interp.size,))
-	#return data_interp
-	#
-	#
-	return np.core.records.fromarrays(zip(*[[x*180/numpy.pi,y*180/numpy.pi,z] for (x,y),z in zip(itertools.product(new_lons.reshape((new_lons.size,)), new_lats.reshape((new_lats.size,))), data_interp)]), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
+		return GMPE_rec
 #
-def interpolation_test():
-	# a short unit-type test of the resize_interpolate() bit.
-	# borrowed from :
-	# http://docs.scipy.org/doc/scipy/reference/generated/scipy.interpolate.RectSphereBivariateSpline.html#scipy.interpolate.RectSphereBivariateSpline
-	lats = np.linspace(10, 170, 9) * np.pi / 180.
-	lons = np.linspace(0, 350, 18) * np.pi / 180.
-	data = np.dot(np.atleast_2d(90. - np.linspace(-80., 80., 18)).T, np.atleast_2d(180. - np.abs(np.linspace(0., 350., 9)))).T
-	#sh=data.shape
-	print('data shape: ', data.shape, data.size)
-	#return data
-	#data.shape=(data.size)
+#
+def plot_xyz_image(xyz, fignum=0, logz=True, interp_type='nearest', cmap='jet'):
 	#
-	dtas = [[x,y,z] for (x,y),z in zip(itertools.product(lons, lats),numpy.reshape(data, numpy.size(data)))]
-	print('shape: ', numpy.shape(dtas))
+	if not hasattr(xyz, 'dtype'):
+		xyz = numpy.core.records.fromarrays(zip(*xyz), dtype=[('x','>f8'), ('y','>f8'), ('z','>f8')])
 	#
-	new_sh = (360, 180)
-	new_data = resize_interpolate(dtas, new_sh)
-	#print('nds: ', numpy.size(new_data.size))
+	X = sorted(list(set(xyz['x'])))
+	Y = sorted(list(set(xyz['y'])))
 	#
-	img_data = new_data['z'].reshape(new_sh)
+	zz=numpy.log(xyz['z'].copy())
+	#zz.shape=(len(Y), len(X))
+	zz.shape=(len(X), len(Y))
 	#
-	fig = plt.figure(0)
+	plt.figure(fignum)
 	plt.clf()
-	ax1 = fig.add_subplot(211)
-	ax1.imshow(data, interpolation='nearest')
-	ax2 = fig.add_subplot(212)
-	ax2.imshow(img_data, interpolation='nearest')
-	plt.show()
-	#
-	pass
-def interpolation_test_2(fignum=0):
-	# this needs some tuning, but it appears to be working and semi-functional
-	# Suppose we have global data on a coarse grid
-	import numpy as np
-
-	lats = np.linspace(10, 170, 9) * np.pi / 180.
-	lons = np.linspace(0, 350, 18) * np.pi / 180.
-	data = np.dot(np.atleast_2d(90. - np.linspace(-80., 80., 18)).T,
-		          np.atleast_2d(180. - np.abs(np.linspace(0., 350., 9)))).T
-	print('orig. shape:: ', numpy.shape(data))
-	# We want to interpolate it to a global one-degree grid
-	dtas = [[x,y,z] for (x,y),z in zip(itertools.product(lons, lats),numpy.reshape(data, numpy.size(data)))]
+	plt.imshow(zz, interpolation=interp_type, cmap=cmap)
+	plt.colorbar()
 	
-	#data2 = numpy.reshape([rw[2] for rw in dtas], data.shape)
-	
-	#lns = sorted(list(set([x for x,y,z in dtas])))
-	#lts = sorted(list(set([y for x,y,z in dtas])))
-	#
-	return interpolate2(dtas, (180,360), 1., 360., 1., 180., fignum=fignum)
-
+#
 def interpolate_etas_test(etas_data='etas_src/etas_japan_20160419_2148CDT_xyz.xyz', new_size=.5, img_interp='nearest', fignum=0):
 	# load an etas (or other) data file, plot. interpolate to new lattice, plot again.
 	# img_interp: interpretation style for plt.imshow(), basically just for show (not part of the actual interpolation algorithm(s).
@@ -269,7 +258,7 @@ def interpolate_etas_test(etas_data='etas_src/etas_japan_20160419_2148CDT_xyz.xy
 		plt.figure(fignum)
 		plt.clf()
 		ax1 = plt.gca()
-		ax1.imshow(Z, interpolation=img_interp)
+		ax1.imshow(Z, interpolation=img_interp, cmap='hot')
 		plt.title('etas test, input data.')
 	#
 	# ... and i think this *should* work but it chucks an error. are the data too complex? not sequenced properly? maybe test with
@@ -281,7 +270,7 @@ def interpolate_etas_test(etas_data='etas_src/etas_japan_20160419_2148CDT_xyz.xy
 	#
 	return data_interp
 
-def interpolate_scipy(data,new_size=.5, interp_type='cubic', lon1=None, lon2=None, lat1=None, lat2=None, fignum=None):
+def interpolate_scipy(data,new_size=.5, interp_type='cubic', lon1=None, lon2=None, lat1=None, lat2=None, fignum=None, cmap='hot'):
 	lons = sorted(list(set([x for x,y,z in data])))
 	lats = sorted(list(set([y for x,y,z in data])))
 	#
@@ -293,12 +282,12 @@ def interpolate_scipy(data,new_size=.5, interp_type='cubic', lon1=None, lon2=Non
 	#
 	#####
 	if fignum!=None:
-		fg=plt.figure(fignum, fig_size=(5,10))
+		fg=plt.figure(fignum, figsize=(5,10))
 		plt.clf()
 		ax1 = fg.add_axes([.1,.08,.8,.4])
 		ax2 = fg.add_axes([.1,.5, .8,.4])
 		#
-		ax1.imshow(Zs, interpolation='nearest')
+		ax1.imshow(Zs, interpolation='nearest', cmap=cmap)
 		#
 		#plt.title('interpolate(d)_scipy')
 		ax1.set_title('original')
@@ -318,136 +307,13 @@ def interpolate_scipy(data,new_size=.5, interp_type='cubic', lon1=None, lon2=Non
 	Zs_new = f_int(new_lons, new_lats)
 	#
 	if fignum!=None:
-		ax2.imshow(Zs_new, interpolation='nearest')
+		ax2.imshow(Zs_new, interpolation='nearest', cmap=cmap)
 		#
 	#
 	print('shapes: ', new_lons.shape, new_lats.shape, Zs_new.shape, Zs_new.size)
 	
-	return numpy.array(list(zip((numpy.reshape(X, (X.size,)) for X in (new_lons, new_lats, Zs_new)))))
-	
-	
-def interpolate_RSBS(data,sz, lon1=None, lon2=None, lat1=None, lat2=None, fignum=None):
-	# interpolate using scipy.interpolate.RectSphereBivariateSpline
-	#
-	# this needs some tuning, but it appears to be working and semi-functional
-	# ... but tends to break for complex array. let's try scipy.interp2d():
-	#http://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.interpolate.interp2d.html
-	#
-	print('data: ', data[0:5])
-	#
-	lons = sorted(list(set([x for x,y,z in data])))
-	lats = sorted(list(set([y for x,y,z in data])))
-	#print('lls: ', len(lats), len(lons))
-	data = numpy.reshape([rw[2] for rw in data], (len(lats), len(lons)))
-	#print('sh: ', numpy.shape(data))
-	#####
-	plt.figure(fignum+2)
-	plt.clf()
-	ax1 = plt.gca()
-	ax1.imshow(data, interpolation='nearest')
-	#####
-	#
-	lon1 = (lon1 or min(lons))
-	lon2 = (lon2 or max(lons))
-	lat1 = (lat1 or min(lats))
-	lat2 = (lat2 or max(lats))
-	#
-	#new_lats = np.linspace(1, 180, 180) * np.pi / 180
-	#new_lons = np.linspace(1, 360, 360) * np.pi / 180
-	new_lats = np.linspace(lat1, lat2, sz[0]) * np.pi / 180
-	new_lons = np.linspace(lon1, lon2, sz[1]) * np.pi / 180
-	new_lats, new_lons = np.meshgrid(new_lats, new_lons)
-
-	# We need to set up the interpolator object
-
-	#from scipy.interpolate import RectSphereBivariateSpline
-	lut = RectSphereBivariateSpline(lats, lons, data)
-	#
-	#lut = RectBivariateSpline(lats, lons, data)
-	print(len(new_lats), len(new_lons[0]), len(data), len(data[0]), new_lats.shape)
-
-	# Finally we interpolate the data.  The `RectSphereBivariateSpline` object
-	# only takes 1-D arrays as input, therefore we need to do some reshaping.
-
-	data_interp = lut.ev(new_lats.ravel(), new_lons.ravel()).reshape(new_lats.shape).T
-
-	# Looking at the original and the interpolated data, one can see that the
-	# interpolant reproduces the original data very well:
-	#
-	if fignum!=None:
-		fig = plt.figure(fignum+0)
-		ax1 = fig.add_subplot(211)
-		ax1.imshow(data, interpolation='nearest')
-		ax2 = fig.add_subplot(212)
-		ax2.imshow(data_interp, interpolation='nearest')
-		plt.show()
-		#
-		# Chosing the optimal value of ``s`` can be a delicate task. Recommended
-		# values for ``s`` depend on the accuracy of the data values.  If the user
-		# has an idea of the statistical errors on the data, she can also find a
-		# proper estimate for ``s``. By assuming that, if she specifies the
-		# right ``s``, the interpolator will use a spline ``f(u,v)`` which exactly
-		# reproduces the function underlying the data, she can evaluate
-		# ``sum((r(i,j)-s(u(i),v(j)))**2)`` to find a good estimate for this ``s``.
-		# For example, if she knows that the statistical errors on her
-		# ``r(i,j)``-values are not greater than 0.1, she may expect that a good
-		# ``s`` should have a value not larger than ``u.size * v.size * (0.1)**2``.
-
-		# If nothing is known about the statistical error in ``r(i,j)``, ``s`` must
-		# be determined by trial and error.  The best is then to start with a very
-		# large value of ``s`` (to determine the least-squares polynomial and the
-		# corresponding upper bound ``fp0`` for ``s``) and then to progressively
-		# decrease the value of ``s`` (say by a factor 10 in the beginning, i.e.
-		# ``s = fp0 / 10, fp0 / 100, ...``  and more carefully as the approximation
-		# shows more detail) to obtain closer fits.
-
-		# The interpolation results for different values of ``s`` give some insight
-		# into this process:
-
-		fig2 = plt.figure(fignum+1)
-		s = [3e9, 2e9, 1e9, 1e8]
-		for ii in range(len(s)):
-			#lut = RectSphereBivariateSpline(lats, lons, data, s=s[ii])
-			RectBivariateSpline(lats, lons, data, s=s[ii])
-			data_interp = lut.ev(new_lats.ravel(),
-				                 new_lons.ravel()).reshape(new_lons.shape).T
-			ax = fig2.add_subplot(2, 2, ii+1)
-			ax.imshow(data_interp, interpolation='nearest')
-			ax.set_title("s = %g" % s[ii])
-	plt.show()
-#
-def calc_GMPEs(ETAS_rec=None, lat_range=None, lon_range=None, m_reff=5.0, motion_type="PGA-soil", just_z=False):
-	# what is the correct syntax to return a subset of columns of a recarray? (the fastest way, of course)?
-	#
-	# construct GMP array and calculate GM from ETAS. this function to be used as an mpp.Pool() worker.
-	#GMPE_rec =[[x,y,0.] for x,y in itertools.product(np.arange(*lon_range), np.arange(*lat_range))]	# check these for proper
-	#
-	# create an empty GMPE array.																		# sequenceing and grouping.
-	GMPE_rec = np.core.records.fromarrays(zip(*[[x,y,0.] for x,y in itertools.product(np.arange(*lon_range), np.arange(*lat_range))]), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
-	#GMPE_rec = np.core.records.fromarrays(zip(*GMPE_array), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
-	#
-	j_prev=0
-	for (j, (lon1, lat1, z_e)), (k, (lon2, lat2, z_g)) in itertools.product(enumerate(ETAS_rec), enumerate(GMPE_rec)):
-		# M=rate_to_m(z_e)
-		if j!=j_prev:
-			print('new row[{}]: {}'.format(os.getpid(), j))
-			j_prev=j
-		#
-		M = m_from_rate(z_e, m_reff)
-		#M = 2.0
-		#
-		distance = spherical_dist(lon_lat_from=[lon1, lat1], lon_lat_to=[lon2, lat2])
-		#g = Geodesic.WGS84.Inverse(lat1, lon1, lat2, lon2)
-		#distance = g['s12']
-		#	
-		#S_Horiz_Soil_Acc = Y(distance, M, "PGA-soil")
-		S_Horiz_Soil_Acc = f_Y(distance, M, motion_type)
-		GMPE_rec['z'][k] = max(GMPE_rec['z'][k], S_Horiz_Soil_Acc)
-	#
-	if just_z:
-		return GMPE_rec['z']
-	else:
-		return GMPE_rec
+	return numpy.array(list(zip(*(numpy.reshape(X, (X.size,)) for X in (new_lons, new_lats, Zs_new)))))
+		
 
 #
 def calc_GMPE(lon1, lat1, lon2, lat2, z_etas, m_reff):
@@ -505,6 +371,19 @@ def spherical_dist(lon_lat_from=[0., 0.], lon_lat_to=[0.,0.], Rearth = 6378.1):
 	R3 = Rearth * sighat3
 	#
 	return R3
+#
+#
+def open_xyz_file(fname='etas_src/etas_japan_20160419_2148CDT_xyz.xyz'):
+	with open(fname, 'r') as xyz:
+		# i don't know why, except maybe because it does handle exceptions/crashes before the file is closed, but this
+		# "open()" syntax seems to be recommended over open(), close() implicit blocks.
+		#
+		ETAS_array = []
+		GMPE_array = []
+		#
+		#ETAS_array = [[float(x), float(y), float(z)] for x,y,z in xyz]
+		#ETAS_array = numpy.core.records.fromarrays([[float(x) for x in rw.split()] for rw in xyz if not rw[0] in ('#', chr(32), chr(10), chr(13), chr(9))], dtype=[('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
+		return numpy.core.records.fromarrays(zip(*[[float(x) for x in rw.split()] for rw in xyz if not rw[0] in ('#', chr(32), chr(10), chr(13), chr(9))]), dtype=[('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
 
 # yoder: let's code this up for both command line and interactive use:
 if __name__=='__main__':
