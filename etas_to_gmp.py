@@ -63,7 +63,13 @@ def f_Y(R,M, a=None, b=None, c1=None, c2=None, d=None, e=None, motion_type='PGA-
 def C(M, c1, c2):
     return c1*np.exp(c2*(M-5))*(np.arctan(M-5)+np.pi/2.0)
 #
-def etas_to_GM(etas_src='etas_src/etas_japan_20160419_2148CDT_xyz.xyz', fname_out='GMPE_rec.p', motion_type='PGA-soil', etas_size=None, gmp_size=None, n_procs=None):
+#
+def etas_to_mag(z_etas, area=100, t0=0., t1=0., t2=0., p=1.05, dm=1.0, mc=2.5):
+	# m = log(N) + dm + mc
+	#
+	return numpy.log10((z_etas*area/(1.-p))*((t0+t2)**(1.-p) - (t0+t1)**(1.-p))) + dm + mc
+#
+def etas_to_GM(etas_src='etas_src/etas_japan2016_20160415_2300CDT_kml_xyz.xyz', fname_out='GMPE_rec.p', motion_type='PGA-soil', etas_size=None, gmp_size=None, n_procs=None):
 	# "ETAS to Ground-Motion:
 	# etas_size: if None, use raw data as they are. otherwise, re-size the lattice using scipy interpolation tools (grid_data() i think)
 	# gmp_size: if None, use raw (etas) data size, otherwise, create a grid... and for these two variables, we need to decide if we want
@@ -187,6 +193,9 @@ def calc_max_GMPEs(ETAS_rec=None, lat_range=None, lon_range=None, m_reff=5.0, mo
 	#GMPE_rec = np.core.records.fromarrays(zip(*[[x,y,0.] for x,y in itertools.product(np.arange(*lon_range), np.arange(*lat_range))]), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
 	GMPE_rec = np.core.records.fromarrays(zip(*[[x,y,0.] for x,y in itertools.product(np.linspace(*lon_range), np.linspace(*lat_range))]), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
 	#
+	d_lat = (lat_range[1]-lat_range[0])/lat_range[2]
+	d_lon = (lon_range[1]-lon_range[0])/lon_range[2]
+	#
 	j_prev=-1
 	for (j, (lon1, lat1, z_e)), (k, (lon2, lat2, z_g)) in itertools.product(enumerate(ETAS_rec), enumerate(GMPE_rec)):
 		# M=rate_to_m(z_e)
@@ -194,7 +203,10 @@ def calc_max_GMPEs(ETAS_rec=None, lat_range=None, lon_range=None, m_reff=5.0, mo
 			#print('new row[{}]: {}/{}'.format(os.getpid(), j,k))
 			j_prev=j
 		#
-		M = m_from_rate(z_e, m_reff)
+		#M = m_from_rate(z_e, m_reff)
+		#M = etas_to_mag(z_e, area=d_lat*d_lon*math.cos(lat1*math.pi/180.)*111.1*111.1, t0=3600., t1=0., t2=30.*24.*3600., p=1.05, dm=1.0, mc=2.5)
+		M = 30.+etas_to_mag(10.**(z_e), area=100., t0=3600., t1=0., t2=90.*24.*3600., p=1.05, dm=1.0, mc=2.5)
+		#if j<5 and k<5: print('M: ', M)
 		#M = 2.0
 		#
 		distance = spherical_dist(lon_lat_from=[lon1, lat1], lon_lat_to=[lon2, lat2])
@@ -203,9 +215,11 @@ def calc_max_GMPEs(ETAS_rec=None, lat_range=None, lon_range=None, m_reff=5.0, mo
 		#	
 		#S_Horiz_Soil_Acc = Y(distance, M, "PGA-soil")
 		S_Horiz_Soil_Acc = f_Y(distance, M, motion_type)
-		#GMPE_rec['z'][k] = max(GMPE_rec['z'][k], S_Horiz_Soil_Acc)
+		#
+		#GMPE_rec['z'][k] = max(z_g, S_Horiz_Soil_Acc)
+		GMPE_rec['z'][k] += S_Horiz_Soil_Acc
 		
-		GMPE_rec['z'][k] = max(abs(GMPE_rec['z'][k]*numpy.exp(z_e)), abs(S_Horiz_Soil_Acc*numpy.exp(z_e)))		
+		#GMPE_rec['z'][k] = max(z_g*numpy.exp(z_e), abs(S_Horiz_Soil_Acc*numpy.exp(z_e)))		
 	#
 	#print('finished with GMPE_rec, len={}'.format(len(GMPE_rec)))
 	if just_z:
@@ -222,7 +236,7 @@ def plot_xyz_image(xyz, fignum=0, logz=True, interp_type='nearest', cmap='jet'):
 	X = sorted(list(set(xyz['x'])))
 	Y = sorted(list(set(xyz['y'])))
 	#
-	zz=numpy.log(xyz['z'].copy())
+	if logz: zz=numpy.log(xyz['z'].copy())
 	#zz.shape=(len(Y), len(X))
 	zz.shape=(len(X), len(Y))
 	#

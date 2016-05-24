@@ -61,8 +61,7 @@ def f_Y(R,M, a=None, b=None, c1=None, c2=None, d=None, e=None, motion_type='PGA-
 
 def C(M, c1, c2):
     return c1*np.exp(c2*(M-5))*(np.arctan(M-5)+np.pi/2.0)
-
-
+#
 # ... but let's do this a different way as well. let's separate data from code, so put this into a dictionary (which is then a global
 # variable, but that's ok... we can use a couple of trick, then, to pull the variables out into function calls. we can use,
 # __dict__.update(motion_type_prams[mt]) to set local variables, or we can calla funciton like f(**motion_type_prams[mt]).
@@ -256,13 +255,20 @@ def calc_GMPEs(ETAS_rec=None, lat_range=None, lon_range=None, m_reff=5.0, motion
 		M = m_from_rate(z_e, m_reff)
 		#M = 2.0
 		#
-		distance = spherical_dist(lon_lat_from=[lon1, lat1], lon_lat_to=[lon2, lat2])
+		#distance = spherical_dist(lon_lat_from=[lon1, lat1], lon_lat_to=[lon2, lat2])
+		
+		distance = spherical_dist(lon_lat_from=[ETAS_rec['lon'][0], ETAS_rec['lat'][0]], lon_lat_to=[lon2, lat2])
+		
 		#g = Geodesic.WGS84.Inverse(lat1, lon1, lat2, lon2)
 		#distance = g['s12']
 		#	
 		#S_Horiz_Soil_Acc = Y(distance, M, "PGA-soil")
 		S_Horiz_Soil_Acc = f_Y(distance, M, motion_type)
-		GMPE_rec['z'][k] = max(GMPE_rec['z'][k], S_Horiz_Soil_Acc)
+		#S_Horiz_Siol_Acc = 1.0/(10.+distance)
+		#
+		#GMPE_rec['z'][k] = max(GMPE_rec['z'][k], S_Horiz_Soil_Acc)
+		GMPE_rec['z'][k] = max(z_g, S_Horiz_Soil_Acc)
+		#GMPE_rec['z'][k] += S_Horiz_Soil_Acc
 	#
 	if just_z:
 		return GMP_rec['z']
