@@ -17,10 +17,11 @@ import matplotlib.pyplot as plt
 import time
 import multiprocessing as mpp
 import os
+import sys
 #
 import rtree
 from rtree import index
-from geographiclib.geodesic import Geodesic
+#from geographiclib.geodesic import Geodesic
 #
 # define the color-cycle for fancy plotting:
 _colors =  mpl.rcParams['axes.color_cycle']
