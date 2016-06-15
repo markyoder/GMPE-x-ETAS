@@ -276,8 +276,9 @@ def calc_GMPEs_exceedance(ETAS_rec=None, lat_range=None, lon_range=None, m_reff=
 		distance = spherical_dist(lon_lat_from=[lon1, lat1], lon_lat_to=[lon2, lat2])
 		#
 		# 
-		S_Horiz_Soil_Acc = f_Y(distance, M+20, motion_type)
+		S_Horiz_Soil_Acc = f_Y(distance, M+10, motion_type)
 		#
+		# Threshold given in g's, cue-heaton eqns give accels in cm/s2. 
 		Prob_exceed = int_log_norm(S_Horiz_Soil_Acc, threshold*980.665, motion_type)
 		#
 		rate_exceed = Prob_exceed*rate
@@ -297,7 +298,7 @@ def int_log_norm(Y, threshold, motion_type):
 	return result[0]
 #
 def normal_integrand(x, mean, sig):
-	return 1/(np.sqrt(2*np.pi)*sig)*np.exp(-((x-mean)/sig)**2/2)
+	return 1./(np.sqrt(2*np.pi)*sig)*np.exp(-((x-mean)/sig)**2/2.)
 #
 
 def plot_xyz_image(xyz, fignum=0, logz=True, needTranspose=True, interp_type='nearest', cmap='jet'):
@@ -424,15 +425,15 @@ def interpolate_scipy(data,new_size=.5, interp_type='cubic', lon1=None, lon2=Non
 	#
 	print('shapes: ', new_lons.shape, new_lats.shape, Zs_new.shape, Zs_new.size)
 	
-	#return numpy.array(list(zip(*(numpy.reshape(X, (X.size,)) for X in (mesh_new_lons, mesh_new_lats, Zs_new)))))
-	#return np.array(list(zip(*(mesh_new_lons.flatten(), mesh_new_lats.flatten(), Zs_new.flatten()))))  <- Returns correct array, but far slower than:
+	#return numpy.array(list(zip(*(numpy.reshape(X, (X.size,)) for X in (new_lons, new_lats, Zs_new)))))
+	#return np.array(list(zip(*(mesh_new_lons.flatten(), mesh_new_lats.flatten(), Zs_new.flatten()))))  #<- Returns correct array, but far slower than:
 	return np.reshape(np.dstack((mesh_new_lons, mesh_new_lats, Zs_new)), (Zs_new.size, 3))
 		
 
 #
 def calc_GMPE(lon1, lat1, lon2, lat2, z_etas, m_reff):
 	m_reff=0.
-	M = m_from_rate(z_e, m_reff)
+	M = m_from_rate(z_etas, m_reff)
 	#M = 2.0
 	#
 	distance = spherical_dist(lon_lat_from=[lon1, lat1], lon_lat_to=[lon2, lat2])
