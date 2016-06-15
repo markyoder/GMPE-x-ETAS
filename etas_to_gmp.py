@@ -6,7 +6,7 @@ Created on Fri Apr  1 13:32:06 2016
 @co-author: mark yoder
 #
 # comments (yoder): we'll need to code this for Python3 compatibility.
-#    ... and i'd rewrite some of this to separate code from data.
+#	... and i'd rewrite some of this to separate code from data.
 """
 #
 import numpy as np
@@ -16,12 +16,16 @@ import math
 import itertools
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+from mpl_toolkits.basemap import Basemap
 import time
 import multiprocessing as mpp
 import os
 import io
+import sys
 from scipy.interpolate import RectSphereBivariateSpline
 from scipy.interpolate import RectBivariateSpline
+from scipy.integrate import quad
+from scipy.stats import norm
 #
 have_numba=True
 try:
@@ -31,7 +35,7 @@ except:
 #
 import rtree
 from rtree import index
-from geographiclib.geodesic import Geodesic
+#from geographiclib.geodesic import Geodesic
 #
 # define the color-cycle for fancy plotting:
 #_colors =  mpl.rcParams['axes.color_cycle']
@@ -39,11 +43,11 @@ _colors = ('b', 'g', 'r', 'c', 'm', 'y', 'k')
 #
 #==============================================================================
 # Extended Magnitude range attenuation relationships for S-wave horizontal acceleration
-#               a       b           c 1     c 2     d       e           sig
-# PGA   rock    0.73    -7.2x10-4   1.16    0.96    -1.48   -0.42       0.31
-#       soil    0.71    -2.38x10-3  1.72    0.96    -1.44   -2.45x10-2  0.33
-# PGV   rock    0.86    -5.58x10-4  0.84    0.98    -1.37   -2.58       0.28
-#       soil    0.89    -8.4x10-4   1.39    0.95    -1.47   -2.24       0.32
+#			   a	   b		   c 1	 c 2	 d	   e		   sig
+# PGA   rock	0.73	-7.2x10-4   1.16	0.96	-1.48   -0.42	   0.31
+#	   soil	0.71	-2.38x10-3  1.72	0.96	-1.44   -2.45x10-2  0.33
+# PGV   rock	0.86	-5.58x10-4  0.84	0.98	-1.37   -2.58	   0.28
+#	   soil	0.89	-8.4x10-4   1.39	0.95	-1.47   -2.24	   0.32
 #==============================================================================
 #R1 = np.sqrt(R**2+9)
 #C = c1*exp(c2*(M-5))*(np.arctan(M-5)+np.pi/2.0)
@@ -51,15 +55,16 @@ _colors = ('b', 'g', 'r', 'c', 'm', 'y', 'k')
 #
 #motion_type_prams = {'PGA-rock':{'a':0.73, 'b':-7.2e-4, 'c1':1.16, 'c2':0.96, 'd':-1.48, 'e':-0.42}, ...}
 # but i'm lazier than that too, and i want to minimize mistakes made by mistyping a variable, so let's code it...
-motion_type_prams_lst_vars = ['a', 'b', 'c1', 'c2', 'd', 'e']
-motion_type_prams_lst = {'PGA-rock':[0.73, -7.2e-4, 1.16, 0.96, -1.48, -0.42],
-                     'PGA-soil':[0.71, -2.38e-3, 1.72, 0.96, -1.44, -2.45e-2],
-                     'PGV-rock':[0.86, -5.58e-4, 0.84, 0.98, -1.37, -2.58],
-                     'PGV-soil':[0.89, -8.4e-4, 1.39, 0.95, -1.47, -2.24]}
+motion_type_prams_lst_vars = ['a', 'b', 'c1', 'c2', 'd', 'e', 'sig']
+motion_type_prams_lst = {'PGA-rock':[0.73, -7.2e-4, 1.16, 0.96, -1.48, -0.42, 0.31],
+					 'PGA-soil':[0.71, -2.38e-3, 1.72, 0.96, -1.44, -2.45e-2, 0.33],
+					 'PGV-rock':[0.86, -5.58e-4, 0.84, 0.98, -1.37, -2.58, 0.28],
+					 'PGV-soil':[0.89, -8.4e-4, 1.39, 0.95, -1.47, -2.24, 0.32]}
 motion_type_prams = {key:{ky:vl for ky,vl in zip(motion_type_prams_lst_vars, vals)} for key,vals in motion_type_prams_lst.items()}
 #print('mtp: ', motion_type_prams)
-
-def etas_to_GM(etas_src='etas_src/etas_japan2016_20160415_2300CDT_kml_xyz.xyz', fname_out='GMPE_rec.p', motion_type='PGA-soil', etas_size=None, gmp_size=None, n_procs=None, do_logz=True):
+#
+#
+def etas_to_GM(etas_src='etas_src/etas_japan2016_20160415_2300CDT_kml_xyz.xyz', fname_out='GMPE_rec.p', motion_type='PGA-soil', etas_size=None, gmp_size=None, n_procs=None, do_logz=True, fignum=None):
 	# "ETAS to Ground-Motion:
 	# etas_size: if None, use raw data as they are. otherwise, re-size the lattice using scipy interpolation tools (grid_data() i think)
 	# gmp_size: if None, use raw (etas) data size, otherwise, create a grid... and for these two variables, we need to decide if we want
@@ -82,6 +87,13 @@ def etas_to_GM(etas_src='etas_src/etas_japan2016_20160415_2300CDT_kml_xyz.xyz', 
 	if not hasattr(ETAS_array, 'dtype'): ETAS_array = np.core.records.fromarrays(zip(*ETAS_array), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
 	if do_logz: ETAS_array['z']=numpy.log10(ETAS_array['z'])
 	#
+	if fignum!=None:
+		plt.figure(fignum)
+		plt.clf()
+		plot_xyz_image(ETAS_array, fignum=3, logz=False, needTranspose=False, cmap='jet')
+		plt.title('ETAS rates')
+
+	#
 	lons = sorted(list(set([x for x,y,z in ETAS_array])))
 	lats = sorted(list(set([y for x,y,z in ETAS_array])))
 	#
@@ -101,12 +113,14 @@ def etas_to_GM(etas_src='etas_src/etas_japan2016_20160415_2300CDT_kml_xyz.xyz', 
 	#
 	if etas_size == None: etas_size=(len(lons), len(lats))
 	if gmp_size  == None: gmp_size=etas_size
+	if isinstance(gmp_size, int) or isinstance(gmp_size, float): gmp_size=[gmp_size, gmp_size]
+	if isinstance(etas_size, int) or isinstance(etas_size, float): etas_size=[etas_size, etas_size]
 	#
 	print('ETAS_array, size: {}, shape: {}/{}'.format(ETAS_array.size, ETAS_array.shape, etas_size))
 	if not tuple(etas_size)==tuple(ETAS_array.shape):
 		# we're resizing and interpolating.
 		# note: i think an easier way to interpolate is to use PIL. load data into an "image" object img and use img.thumbnail(sz, opts...)
-		ETAS_array = interpolate_scipy(ETAS_array, etas_size, fignum=0)
+		ETAS_array = interpolate_scipy(ETAS_array, etas_size, fignum=0, cmap='jet')
 		#print('New ETAS_array, size: {}, shape: {}'.format(ETAS_array.size, ETAS_array.shape))
 		#
 		lons = sorted(list(set([x for x,y,z in ETAS_array])))
@@ -153,7 +167,10 @@ def etas_to_GM(etas_src='etas_src/etas_japan2016_20160415_2300CDT_kml_xyz.xyz', 
 		chunk_size = int(np.ceil(l_etas/n_procs))		# "chunk" size, or length of sub-arrays for parallel processing.
 		#
 		# pass part of ETAS; distribute and return a full GMPE_rec[] from each process.
-		resultses = [P.apply_async(calc_max_GMPEs, (), {'ETAS_rec':ETAS_rec[j_p*chunk_size:(j_p+1)*chunk_size], 'lon_range':gmp_lon_range, 'lat_range':gmp_lat_range, 'm_reff':5.0, 'just_z':True}) for j_p in range(n_procs)]
+		#
+		#resultses = [P.apply_async(calc_max_GMPEs, (), {'ETAS_rec':ETAS_rec[j_p*chunk_size:(j_p+1)*chunk_size], 'lon_range':gmp_lon_range, 'lat_range':gmp_lat_range, 'm_reff':5.0, 'just_z':True}) for j_p in range(n_procs)]
+		#
+		resultses = [P.apply_async(calc_GMPEs_exceedance, (), {'ETAS_rec':ETAS_rec[j_p*chunk_size:(j_p+1)*chunk_size], 'lon_range':gmp_lon_range, 'lat_range':gmp_lat_range, 'm_reff':5.0, 'just_z':True}) for j_p in range(n_procs)]
 		#
 		P.close()
 		P.join()
@@ -161,29 +178,34 @@ def etas_to_GM(etas_src='etas_src/etas_japan2016_20160415_2300CDT_kml_xyz.xyz', 
 		# not sure of this syntax just yet. it is admittedly a little bit convoluted. it might be better to just suck it up and
 		# do an extra loop through the array: set up the zero-value initial array, then add all the returns. here, we're trying to
 		# squeeze out a little bit of performance by setting up the array and the first results simultaneously.
+		#
 		#GMPE_rec = np.core.records.fromarrays(zip(*[[x,y,z] for (x,y),z in zip(itertools.product(np.arange(*lon_range), np.arange(*lat_range)), resultses[0].get())]), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
 		GMPE_rec = np.core.records.fromarrays(zip(*[[x,y,z] for (x,y),z in zip(itertools.product(np.linspace(*gmp_lon_range), np.linspace(*gmp_lat_range)), resultses[0].get())]), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
+		#
 		for j,res in enumerate(resultses[1:]):
 			#GMPE_rec['z']+=np.array(res.get())
 			GMPE_rec['z'] = [max(z0,z1) for z0,z1 in zip(GMPE_rec['z'], res.get())]
 			pass
 		#
 		# look in vc_parser for proper syntax using Pool() objects with close() and join().
-		#P.join()
+		# P.join()
 	#
 	if n_procs==1:
 		# there are different ways to calculate GMPE. just so we can get a number, let's just aggregate the output for now.
-		GMPE_rec = calc_max_GMPEs(ETAS_rec=ETAS_rec, lat_range=gmp_lat_range, lon_range=gmp_lon_range, m_reff=5.0, just_z=False)
+		#GMPE_rec = calc_max_GMPEs(ETAS_rec=ETAS_rec, lat_range=gmp_lat_range, lon_range=gmp_lon_range, m_reff=5.0, just_z=False)
+		# Wilson: Uses forumlae for rate of exceedence of a threshold acceleration, by default we use 0.2g 
+		GMPE_rec = calc_GMPEs_exceedance(ETAS_rec=ETAS_rec, lat_range=gmp_lat_range, lon_range=gmp_lon_range)
 	#
 	#t1 = time.time()
 	#print(t1 - t0)
 	#
 	#GMPE_rec.dump(fname_out)
 	#
-	GMPE_rec.sort(order=('x','y'))
-	plot_xyz_image(GMPE_rec, fignum=4, cmap='hot')
+	#GMPE_rec.sort(order=('x','y'))
+	#plot_xyz_image(GMPE_rec, fignum=4, cmap='hot')
 	#
 	print('Elapsed time: ', time.time()-t_test_0)
+	plot_xyz_image(GMPE_rec, fignum=fignum+1, cmap='jet')
 	
 	return GMPE_rec
 #
@@ -214,7 +236,7 @@ def calc_max_GMPEs(ETAS_rec=None, lat_range=None, lon_range=None, mc=2.5, m_reff
 		# note: etas_rate_density_to_mag() takes a log_z value, which is typically what we keep from ETAS (because it's meaningful), but
 		#  we need to clarify the notation so that the code is pretty and not confusing...
 		
-		M = etas_rate_density_to_mag(z_e, mc=mc)+20
+		M = etas_rate_density_to_mag(z_e, mc=mc)
 		#M = etas_rate_density_to_mag_t0(z_e, mc=mc)		
 		#if j<5 and k<5: print('M: ', M)
 		#M = 2.0
@@ -228,13 +250,11 @@ def calc_max_GMPEs(ETAS_rec=None, lat_range=None, lon_range=None, mc=2.5, m_reff
 		#	
 		#S_Horiz_Soil_Acc = Y(distance, M, "PGA-soil")
 		
-		S_Horiz_Soil_Acc = abs(f_Y(R=distance, M=M, motion_type=motion_type))
+		S_Horiz_Soil_Acc = f_Y(R=distance, M=M, motion_type=motion_type)
 		#S_Horiz_Soil_Acc = M/distance
 		#
 		GMPE_rec['z'][k] = max(z_g, S_Horiz_Soil_Acc)
 		#GMPE_rec['z'][k] += S_Horiz_Soil_Acc
-		
-		#GMPE_rec['z'][k] = max(z_g*numpy.exp(z_e), abs(S_Horiz_Soil_Acc*numpy.exp(z_e)))		
 	#
 	#print('finished with GMPE_rec, len={}'.format(len(GMPE_rec)))
 	if just_z:
@@ -242,27 +262,72 @@ def calc_max_GMPEs(ETAS_rec=None, lat_range=None, lon_range=None, mc=2.5, m_reff
 	else:
 		return GMPE_rec
 #
+#
+def calc_GMPEs_exceedance(ETAS_rec=None, lat_range=None, lon_range=None, m_reff=10., mc=2.5, threshold= 0.2, motion_type="PGA-soil", just_z=False):
+	# what is the correct syntax to return a subset of columns of a recarray? (the fastest way, of course)?
+	#
+	# construct GMP array and calculate GM from ETAS. this function to be used as an mpp.Pool() worker.
+	#GMPE_rec =[[x,y,0.] for x,y in itertools.product(np.arange(*lon_range), np.arange(*lat_range))]	# check these for proper
+	#
+	# create an empty GMPE array.																		# sequenceing and grouping.
+	#GMPE_rec = np.core.records.fromarrays(zip(*[[x,y,0.] for x,y in itertools.product(np.arange(*lon_range), np.arange(*lat_range))]), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
+	GMPE_rec = np.core.records.fromarrays(zip(*[[x,y,0.] for x,y in itertools.product(np.linspace(*lon_range), np.linspace(*lat_range))]), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
+	#
+	#d_lat = (lat_range[1]-lat_range[0])/lat_range[2]
+	#d_lon = (lon_range[1]-lon_range[0])/lon_range[2]
+	#
+	j_prev=-1
+	for (j, (lon1, lat1, z_e)), (k, (lon2, lat2, z_g)) in itertools.product(enumerate(ETAS_rec), enumerate(GMPE_rec)):
+		# M=rate_to_m(z_e)
+		if j!=j_prev:
+			#print('new row[{}]: {}/{}'.format(os.getpid(), j,k))
+			j_prev=j
+		#
+		#M = etas_to_mag(z_e, area=d_lat*d_lon*math.cos(lat1*math.pi/180.)*111.1*111.1, t0=3600., t1=0., t2=30.*24.*3600., p=1.05, dm=1.0, mc=2.5)
+		# yoder: i think it will make more sense to calculate the magnitude and rate separately, since we're given the rate-density.
+		# moreover, i think we can interpret this as an excedence probabiltiy density, but the will be more to work out for that...
+		#M, rate = etas_to_mag_rate(10.**(z_e), area=100., t0=3600., t1=0., t2=90.*24.*3600., p=1.05, dm=1.0, mc=2.5)
+		rate = 1.0
+		M = etas_rate_density_to_mag(z_etas_log=z_e, mc=mc)
+		#
+		distance = spherical_dist(lon_lat_from=[lon1, lat1], lon_lat_to=[lon2, lat2])
+		#
+		# 
+		S_Horiz_Soil_Acc = f_Y(distance, M+m_reff, motion_type)
+		#
+		# ... and i think this is killing us performance-wise. is there a shortcut?
+		Prob_exceed = int_log_norm(S_Horiz_Soil_Acc, threshold*980.665, motion_type)
+		#
+		rate_exceed = Prob_exceed*rate
+		#
+		GMPE_rec['z'][k] += rate_exceed
+				
+		#GMPE_rec['z'][k] = max(z_g*numpy.exp(z_e), abs(S_Horiz_Soil_Acc*numpy.exp(z_e)))		
+	# TODO: Wilson: To turn this rate of exceedance into a probability of exceedance over a time interval, plug this rate into eg Poissonian 1-exp(-Rate*Time)
+	#print('finished with GMPE_rec, len={}'.format(len(GMPE_rec)))
+	if just_z:
+		return GMPE_rec['z']
+	else:
+		return GMPE_rec
+#
 #@numba.jit
-def f_Y(R,M, a=None, b=None, c1=None, c2=None, d=None, e=None, motion_type='PGA-soil'):
+def f_Y(R,M, a=None, b=None, c1=None, c2=None, d=None, e=None, sig=None, motion_type='PGA-soil'):
 	# experimenting a bit with this quasi-recursive call structure. this approach might be slow, and maybe we should just separate this into
 	# two separate functions.
-	# so what happens here is we can call the function with just the motion type specified, in which case, it grabs the motion-tipe
-	# parameters and calls itself again -- with the parameters.
 	if motion_type!=None:
 		return f_Y(R,M, motion_type=None, **motion_type_prams[motion_type])
 	else:
-		# example: here's something you can't do with numba.jit. we can't seem to compile a function that contains
-		# references to compiled objects, like this call to numpy.sqrt(), scipy.sqrt(), etc.
-		#
-		#return 10**(a*M + b*(np.sqrt(R**2+9) + C(M, c1, c2)) + d*np.log10(np.sqrt(R**2+9) + C(M, c1, c2)) + e)
-		#r0 = .5*10**(.5*M-1.76)
-		r0 = 0.
-		#return 10**(a*M + b*(scipy.sqrt((R + r0)**2+9) + C(M, c1, c2)) + d*scipy.log10(np.sqrt((R + r0)**2+9) + C(M, c1, c2)) + e)
-		return (a*M + b*(scipy.sqrt(R**2 + 9) + C(M, c1, c2)) + d*scipy.log10(np.sqrt(R**2 + 9) + C(M, c1, c2)) + e)
+		return 10**(a*M + b*(np.sqrt(R**2+9) + C(M, c1, c2)) + d*np.log10(np.sqrt(R**2+9) + C(M, c1, c2)) + e)
+		#return (a*M + b*(np.sqrt(R**2+9) + C(M, c1, c2)) + d*np.log10(np.sqrt(R**2+9) + C(M, c1, c2)) + e)
 #@numba.jit
 def C(M, c1, c2):
     return c1*np.exp(c2*(M-5))*(np.arctan(M-5)+np.pi/2.0)
 #
+def etas_to_mag_rate(z_etas, area=100, t0=0., t1=0., t2=0., p=1.05, dm=1.0, mc=2.5):
+	# m = log(N) + dm + mc
+	#returns (magnitude, annual rate)
+	#TODO: 1.0/yr rate is a placeholder, we need to include annual rate in our conversion from etas->magnitude.
+	return (numpy.log10((z_etas*area/(1.-p))*((t0+t2)**(1.-p) - (t0+t1)**(1.-p))) + dm + mc, 1.0)
 #
 #@numba.jit
 def etas_to_mag(z_etas, area=100, t0=0., t1=0., t2=0., p=1.05, dm=1.0, mc=2.5):
@@ -294,31 +359,100 @@ def etas_rate_density_to_mag_t0(z_etas_log, mc, lt0=5, D=1.5, b=1.0, dm_bath=1.0
 def z_of_m(m, mc, D=1.5, b=1.0, dm_bath=1.0, dm_tau=0., d_lambda=1.76, d_tau=2.3, p=1.1, q=1.5):
 	return m*(b-(2./3)+(D/(2+D))) - mc*(b+(D/(2+D))+(1./3)) - dm_bath*(b + (D/(2+D))) + (-numpy.log10(numpy.pi*(q-1)) + d_lambda + d_tau + (2/(2+D))*numpy.log10(1+D/2) + (2/3)*numpy.log10(1.5) - (dm_tau/3)) 
 #
+def int_log_norm(Y, threshold, motion_type):
+	result = quad(normal_integrand, np.log10(threshold), np.inf, args=(np.log10(Y), motion_type_prams[motion_type]['sig']))
+	return result[0]
 #
-def plot_xyz_image(xyz, fignum=0, logz=True, interp_type='nearest', cmap='jet'):
+def normal_integrand(x, mean, sig):
+	return 1/(np.sqrt(2*np.pi)*sig)*np.exp(-((x-mean)/sig)**2/2)
+#
+def plot_xyz_image(xyz, fignum=0, logz=True, needTranspose=True, interp_type='nearest', cmap='jet', do_map=True):
 	#
 	if not hasattr(xyz, 'dtype'):
 		xyz = numpy.core.records.fromarrays(zip(*xyz), dtype=[('x','>f8'), ('y','>f8'), ('z','>f8')])
 	#
 	X = sorted(list(set(xyz['x'])))
 	Y = sorted(list(set(xyz['y'])))
+	mgx, mgy = np.meshgrid(X, Y)
+	print("len(X) = "+str(len(X)))
+	print("len(Y) = "+str(len(Y)))
+	print("Total size = "+str(len(xyz)))
 	#
-	if logz:
-		zz=numpy.log10(xyz['z'].copy())
-	else:
-		zz = xyz['z']
+
+	if logz: zz=numpy.log(xyz['z'].copy())
+	else: zz=xyz['z'].copy()
 	#zz.shape=(len(Y), len(X))
-	zz.shape=(len(X), len(Y))
-	
+	if needTranspose==True:
+		zz.shape=(len(X), len(Y))
+		zz = zz.T
+	else:
+		zz.shape=(len(Y), len(X))
 	#
+	
 	plt.figure(fignum)
 	plt.clf()
 	plt.imshow(numpy.flipud(zz.transpose()), interpolation=interp_type, cmap=cmap)
+	#plt.colorbar()
+	#
+	if do_map:
+		m = Basemap(projection='cyl', llcrnrlat=Y[0], urcrnrlat=Y[-1], llcrnrlon=X[0], urcrnrlon=X[-1], resolution='i')
+		m.drawcoastlines()
+		m.drawmapboundary()#fill_color='PaleTurquoise')
+		#m.fillcontinents(color='lemonchiffon',lake_color='PaleTurquoise', zorder=0)
+		m.drawstates()
+		m.drawcountries()
+		m.pcolor(mgx, mgy, zz, cmap=cmap)
 	plt.colorbar()
+	
+	#plt.figure(fignum)
+	#plt.clf()
+	#plt.imshow(zz, interpolation=interp_type, cmap=cmap)
+	#plt.colorbar()
+	
+#
+def interpolate_etas_test(etas_data='etas_src/etas_japan_20160419_2148CDT_xyz.xyz', new_size=.5, img_interp='nearest', fignum=0):
+	# load an etas (or other) data file, plot. interpolate to new lattice, plot again.
+	# img_interp: interpretation style for plt.imshow(), basically just for show (not part of the actual interpolation algorithm(s).
+	#			options include (‘none’, ‘nearest’, ‘bilinear’, ‘bicubic’, ‘spline16’, ‘spline36’, ‘hanning’, ‘hamming’, ‘hermite’, ‘kaiser’, ‘quadric’, ‘catrom’, ‘gaussian’, ‘bessel’, ‘mitchell’, ‘sinc’, ‘lanczos’)
+	#
+	with open(etas_data) as fin:
+		xyz = [[float(x) for x in rw.split()] for rw in fin if rw[0] not in (chr(9), chr(13), chr(10), chr(32), '#')]
+		#
+	#
+	print('size: ', len(xyz))
+	#
+	for j,(x,y,z) in enumerate(xyz): xyz[j][2]=numpy.log(z)
+	lons_in, lats_in = (sorted(list(set(col))) for col in list(zip(*xyz))[0:2])
+	#Z = numpy.array([numpy.log(z) for x,y,z in xyz])
+	Z = numpy.array([z for x,y,z in xyz])
+	#
+	#lons_in sorted(list(set([x for x,y,z in xyz])))
+	#lats_in = sorted(list(set([y for x,y,z in xyz])))
+	#
+	Z.shape=(len(lats_in), len(lons_in))
+	#Z=Z.transpose()
+	#
+	if fignum!=None:
+		plt.figure(fignum)
+		plt.clf()
+		ax1 = plt.gca()
+		ax1.imshow(Z, interpolation=img_interp, cmap='hot')
+		plt.title('etas test, input data.')
+	#
+	# ... and i think this *should* work but it chucks an error. are the data too complex? not sequenced properly? maybe test with
+	# the 2D array that we know will plot properly.
+	#data_interp = interpolate_RSBS(numpy.array(xyz), sz=(2.*Z.shape[0], 2.*Z.shape[1]), fignum=2)
+	#
+	# ... but this works quite nicely (using the scipy.interpolate.interp2d() method.
+	data_interp = interpolate_scipy(numpy.array(xyz), new_size=new_size, fignum=2)
+	#
+	return data_interp
 
 def interpolate_scipy(data,new_size=.5, interp_type='cubic', lon1=None, lon2=None, lat1=None, lat2=None, fignum=None, cmap='hot'):
-	lons = sorted(list(set([x for x,y,z in data])))
-	lats = sorted(list(set([y for x,y,z in data])))
+	allLons = [x for x,y,z in data]
+	allLats = [y for x,y,z in data]
+	lons = sorted(list(set(allLons)))
+	lats = sorted(list(set(allLats)))
 	#
 	#print('lls: ', len(lats), len(lons))
 	Zs = numpy.reshape([rw[2] for rw in data], (len(lats), len(lons)))
@@ -327,6 +461,7 @@ def interpolate_scipy(data,new_size=.5, interp_type='cubic', lon1=None, lon2=Non
 	if isinstance(new_size,float): new_size=[new_size*x for x in Zs.shape]
 	#
 	#####
+	"""
 	if fignum!=None:
 		fg=plt.figure(fignum, figsize=(5,10))
 		plt.clf()
@@ -338,6 +473,7 @@ def interpolate_scipy(data,new_size=.5, interp_type='cubic', lon1=None, lon2=Non
 		#plt.title('interpolate(d)_scipy')
 		ax1.set_title('original')
 		ax2.set_title('interpolate(d)_scipy')
+	"""
 	#####
 	#
 	lon1 = (lon1 or min(lons))
@@ -347,18 +483,27 @@ def interpolate_scipy(data,new_size=.5, interp_type='cubic', lon1=None, lon2=Non
 	#
 	new_lats = np.linspace(lat1, lat2, new_size[0])
 	new_lons = np.linspace(lon1, lon2, new_size[1])
-	#new_lats, new_lons = np.meshgrid(new_lats, new_lons)
+	mesh_new_lons, mesh_new_lats = np.meshgrid(new_lons, new_lats)
 	#
 	f_int = scipy.interpolate.interp2d(lons, lats, Zs, kind=interp_type)
 	Zs_new = f_int(new_lons, new_lats)
 	#
+	"""
 	if fignum!=None:
 		ax2.imshow(Zs_new, interpolation='nearest', cmap=cmap)
-		#
+	"""
 	#
 	print('shapes: ', new_lons.shape, new_lats.shape, Zs_new.shape, Zs_new.size)
 	
-	return numpy.array(list(zip(*(numpy.reshape(X, (X.size,)) for X in (new_lons, new_lats, Zs_new)))))
+	#<<<<<<< HEAD
+	#return numpy.array(list(zip(*(numpy.reshape(X, (X.size,)) for X in (new_lons, new_lats, Zs_new)))))
+	#=======
+	#return numpy.array(list(zip(*(numpy.reshape(X, (X.size,)) for X in (mesh_new_lons, mesh_new_lats, Zs_new)))))
+	#return np.array(list(zip(*(mesh_new_lons.flatten(), mesh_new_lats.flatten(), Zs_new.flatten()))))  <- Returns correct array, but far slower than:
+	return np.reshape(np.dstack((mesh_new_lons, mesh_new_lats, Zs_new)), (Zs_new.size, 3))
+		
+
+	#>>>>>>> upstream/master
 #
 #@numba.jit
 def calc_GMPE(lon1, lat1, lon2, lat2, z_etas, m_reff):
@@ -451,6 +596,8 @@ if __name__=='__main__':
 	#kwds = {key:float(val) for key,val in kwds.items()}
 	#pargs = [float(x) for x in pargs]
 	#
+	kwds['n_procs']=3
+	#	
 	X=etas_to_GM(*pargs, **kwds)
 else:
 	plt.ion()
