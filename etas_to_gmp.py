@@ -263,8 +263,7 @@ def calc_max_GMPEs(ETAS_rec=None, lat_range=None, lon_range=None, mc=2.5, m_reff
 		return GMPE_rec
 #
 #
-def calc_GMPEs_exceedance(ETAS_rec=None, lat_range=None, lon_range=None, m_reff=10., mc=2.5, threshold= 0.2, motion_type="PGA-soil", just_z=False):
-	# what is the correct syntax to return a subset of columns of a recarray? (the fastest way, of course)?
+def calc_GMPEs_exceedance(ETAS_rec=None, lat_range=None, lon_range=None, m_reff=0., mc=2.5, threshold= 0.2, motion_type="PGA-soil", just_z=False):
 	#
 	# construct GMP array and calculate GM from ETAS. this function to be used as an mpp.Pool() worker.
 	#GMPE_rec =[[x,y,0.] for x,y in itertools.product(np.arange(*lon_range), np.arange(*lat_range))]	# check these for proper
@@ -336,6 +335,7 @@ def etas_to_mag(z_etas, area=100, t0=0., t1=0., t2=0., p=1.05, dm=1.0, mc=2.5):
 	return numpy.log10((z_etas*area/(1.-p))*((t0+t2)**(1.-p) - (t0+t1)**(1.-p))) + dm + mc
 #
 #@numba.jit
+# i still have a mistake in here, but it's closer...
 def etas_rate_density_to_mag(z_etas_log, mc, D=1.5, b=1.0, dm_bath=1.0, dm_tau=0., d_lambda=1.76, d_tau=2.3, p=1.1, q=1.5):
 	'''
 	# invert Yoder et al. (2015) self-similar model to calculate "characteristic magnitude" for a measured ETAS rate-density.
@@ -348,11 +348,16 @@ def etas_rate_density_to_mag(z_etas_log, mc, D=1.5, b=1.0, dm_bath=1.0, dm_tau=0
 	#
 	# note: this can probably be reduced algebraically. will it make it faster if we compile it with jit?
 	'''
-	return (1./(b-(2./3)+(D/(2+D))))*(z_etas_log + mc*(b+(D/(2+D))+(1./3)) + dm_bath*(b + (D/(2+D))) - (-numpy.log10(numpy.pi*(q-1)) + d_lambda + d_tau + (2/(2+D))*numpy.log10(1+D/2) + (2/3)*numpy.log10(1.5) - (dm_tau/3)) )
+	#return (1./(b-(2./3)+(D/(2+D))))*(z_etas_log + mc*(b+(D/(2+D))+(1./3)) + dm_bath*(b + (D/(2+D))) - (-numpy.log10(numpy.pi*(q-1)) + d_lambda + d_tau + (2/(2+D))*numpy.log10(1+D/2) + (2/3)*numpy.log10(1.5) - (dm_tau/3)) )
+	return (1./(-2*b-(7./6.)+(2*D/(2+D))))*(z_etas_log - 
+	 mc*(2*b - (2*D/(2+D)) - (1./3)) - 
+	 dm_bath*(2*b - (2*D/(2+D))) - 
+	 (numpy.log10(2./(numpy.pi*(q-1))) + 2*d_lambda + d_tau + (4./(2.+D))*numpy.log10(1.+D/2.) + (2./3.)*numpy.log10(1.5) - (dm_tau/3.)) )
 	#
 #@numba.jit
 def etas_rate_density_to_mag_t0(z_etas_log, mc, lt0=5, D=1.5, b=1.0, dm_bath=1.0, d_lambda=1.76, d_tau=2.3, p=1.1, q=1.5):
 	# same as etas_rate_density_to_mag, but we specify t0 (or log10(t0)). log10(t0)=5 ~ 24 hours
+	# TODO: this function needs to be re-evaluated to accunt for a possible mistake in the N_as/L_r term (which may need to be squared).
 	return (1./(D/(2+D)) + 2*b - .5)*(z_etas_log + lt0 + dm_bath*(D/(2+D) + 2*b) + mc*(D/(2+D) + 2*b) - (numpy.log10((p-1)/(numpy.pi*(q-1))) + d_lambda + (2/(2+D))*numpy.log10((2+D)/2) )  )
 	
 #@numba.jit
