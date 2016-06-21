@@ -64,7 +64,7 @@ motion_type_prams = {key:{ky:vl for ky,vl in zip(motion_type_prams_lst_vars, val
 #print('mtp: ', motion_type_prams)
 #
 #
-def etas_to_GM(etas_src='etas_src/etas_japan2016_20160415_2300CDT_kml_xyz.xyz', fname_out='GMPE_rec.p', motion_type='PGA-soil', etas_size=None, gmp_size=None, n_procs=None, do_logz=True, fignum=None):
+def etas_to_GM(etas_src='etas_src/kyushu_immediate2016-06-19_20:48:43_528251+00:00_xyz.xyz', fname_out='GMPE_rec.p', motion_type='PGA-soil', etas_size=None, gmp_size=None, n_procs=None, do_logz=True, fignum=None):
 	# "ETAS to Ground-Motion:
 	# etas_size: if None, use raw data as they are. otherwise, re-size the lattice using scipy interpolation tools (grid_data() i think)
 	# gmp_size: if None, use raw (etas) data size, otherwise, create a grid... and for these two variables, we need to decide if we want
@@ -131,7 +131,8 @@ def etas_to_GM(etas_src='etas_src/etas_japan2016_20160415_2300CDT_kml_xyz.xyz', 
 	ETAS_rec = np.core.records.fromarrays(zip(*ETAS_array), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
 	#GMPE_rec = [[x,y,0] for x,y in itertools.product(numpy.linspace(min(lons), max(lons), gmp_size[0]), numpy.linspace(min(lats), max(lats), gmp_size[1]))]
 	#
-	#plot_xyz_image(ETAS_rec, fignum=1)
+	fignum = 1
+	plot_xyz_image(ETAS_rec, fignum=1)
 
 	# so what are the parameters? for now, assume we have a rectangular grid;
 	# define parameters from which to construct a GMPE array.
