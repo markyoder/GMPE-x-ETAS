@@ -64,7 +64,7 @@ motion_type_prams = {key:{ky:vl for ky,vl in zip(motion_type_prams_lst_vars, val
 #print('mtp: ', motion_type_prams)
 #
 #
-def etas_to_GM(etas_src='etas_src/etas_japan2016_20160415_2300CDT_kml_xyz.xyz', fname_out='GMPE_rec.p', motion_type='PGA-soil', etas_size=None, gmp_size=None, n_procs=None, do_logz=True, fignum=None):
+def etas_to_GM(etas_src='etas_src/kyushu_immediate2016-06-19_20:48:43_528251+00:00_xyz.xyz', fname_out='GMPE_rec.p', motion_type='PGA-soil', etas_size=None, gmp_size=None, n_procs=None, do_logz=True, fignum=None):
 	# "ETAS to Ground-Motion:
 	# etas_size: if None, use raw data as they are. otherwise, re-size the lattice using scipy interpolation tools (grid_data() i think)
 	# gmp_size: if None, use raw (etas) data size, otherwise, create a grid... and for these two variables, we need to decide if we want
@@ -131,7 +131,8 @@ def etas_to_GM(etas_src='etas_src/etas_japan2016_20160415_2300CDT_kml_xyz.xyz', 
 	ETAS_rec = np.core.records.fromarrays(zip(*ETAS_array), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
 	#GMPE_rec = [[x,y,0] for x,y in itertools.product(numpy.linspace(min(lons), max(lons), gmp_size[0]), numpy.linspace(min(lats), max(lats), gmp_size[1]))]
 	#
-	#plot_xyz_image(ETAS_rec, fignum=1)
+	fignum = 1
+	plot_xyz_image(ETAS_rec, fignum=1)
 
 	# so what are the parameters? for now, assume we have a rectangular grid;
 	# define parameters from which to construct a GMPE array.
@@ -263,8 +264,7 @@ def calc_max_GMPEs(ETAS_rec=None, lat_range=None, lon_range=None, mc=2.5, m_reff
 		return GMPE_rec
 #
 #
-def calc_GMPEs_exceedance(ETAS_rec=None, lat_range=None, lon_range=None, m_reff=10., mc=2.5, threshold= 0.2, motion_type="PGA-soil", just_z=False):
-	# what is the correct syntax to return a subset of columns of a recarray? (the fastest way, of course)?
+def calc_GMPEs_exceedance(ETAS_rec=None, lat_range=None, lon_range=None, m_reff=0., mc=2.5, threshold= 0.2, motion_type="PGA-soil", just_z=False):
 	#
 	# construct GMP array and calculate GM from ETAS. this function to be used as an mpp.Pool() worker.
 	#GMPE_rec =[[x,y,0.] for x,y in itertools.product(np.arange(*lon_range), np.arange(*lat_range))]	# check these for proper
@@ -338,6 +338,7 @@ def etas_to_mag(z_etas, area=100, t0=0., t1=0., t2=0., p=1.05, dm=1.0, mc=2.5):
 	return numpy.log10((z_etas*area/(1.-p))*((t0+t2)**(1.-p) - (t0+t1)**(1.-p))) + dm + mc
 #
 #@numba.jit
+# i still have a mistake in here, but it's closer...
 def etas_rate_density_to_mag(z_etas_log, mc, D=1.5, b=1.0, dm_bath=1.0, dm_tau=0., d_lambda=1.76, d_tau=2.3, p=1.1, q=1.5):
 	'''
 	# invert Yoder et al. (2015) self-similar model to calculate "characteristic magnitude" for a measured ETAS rate-density.
@@ -350,11 +351,16 @@ def etas_rate_density_to_mag(z_etas_log, mc, D=1.5, b=1.0, dm_bath=1.0, dm_tau=0
 	#
 	# note: this can probably be reduced algebraically. will it make it faster if we compile it with jit?
 	'''
-	return (1./(b-(2./3)+(D/(2+D))))*(z_etas_log + mc*(b+(D/(2+D))+(1./3)) + dm_bath*(b + (D/(2+D))) - (-numpy.log10(numpy.pi*(q-1)) + d_lambda + d_tau + (2/(2+D))*numpy.log10(1+D/2) + (2/3)*numpy.log10(1.5) - (dm_tau/3)) )
+	#return (1./(b-(2./3)+(D/(2+D))))*(z_etas_log + mc*(b+(D/(2+D))+(1./3)) + dm_bath*(b + (D/(2+D))) - (-numpy.log10(numpy.pi*(q-1)) + d_lambda + d_tau + (2/(2+D))*numpy.log10(1+D/2) + (2/3)*numpy.log10(1.5) - (dm_tau/3)) )
+	return (1./(-2*b-(7./6.)+(2*D/(2+D))))*(z_etas_log - 
+	 mc*(2*b - (2*D/(2+D)) - (1./3)) - 
+	 dm_bath*(2*b - (2*D/(2+D))) - 
+	 (numpy.log10(2./(numpy.pi*(q-1))) + 2*d_lambda + d_tau + (4./(2.+D))*numpy.log10(1.+D/2.) + (2./3.)*numpy.log10(1.5) - (dm_tau/3.)) )
 	#
 #@numba.jit
 def etas_rate_density_to_mag_t0(z_etas_log, mc, lt0=5, D=1.5, b=1.0, dm_bath=1.0, d_lambda=1.76, d_tau=2.3, p=1.1, q=1.5):
 	# same as etas_rate_density_to_mag, but we specify t0 (or log10(t0)). log10(t0)=5 ~ 24 hours
+	# TODO: this function needs to be re-evaluated to accunt for a possible mistake in the N_as/L_r term (which may need to be squared).
 	return (1./(D/(2+D)) + 2*b - .5)*(z_etas_log + lt0 + dm_bath*(D/(2+D) + 2*b) + mc*(D/(2+D) + 2*b) - (numpy.log10((p-1)/(numpy.pi*(q-1))) + d_lambda + (2/(2+D))*numpy.log10((2+D)/2) )  )
 	
 #@numba.jit
