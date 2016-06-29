@@ -214,7 +214,12 @@ def etas_to_GM(etas_src='etas_src/kyushu_immediate2016-06-19_20:48:43_528251+00:
 	#plot_xyz_image(GMPE_rec, fignum=4, cmap='hot')
 	#
 	print('Elapsed time: ', time.time()-t_test_0)
-	plot_xyz_image(GMPE_rec, fignum=fignum+1, cmap='jet')
+	if fignum!=None:
+		plt.figure(fignum+1)
+		plt.clf()
+		plot_xyz_image(GMPE_rec, fignum=fignum+1, cmap='jet')
+		plt.title('Shaking rates')
+		
 	
 	return GMPE_rec
 #
@@ -707,6 +712,7 @@ if __name__=='__main__':
 	#
 	kwds['etas_src']='etas_src/kyushu_immediate2016-06-19_20:48:43_528251+00:00_xyz.xyz'
 	kwds['maxMag'] = 7.0
+	kwds['fignum']=0
 	kwds['n_procs']=4
 	#
 	#
