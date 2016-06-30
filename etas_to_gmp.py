@@ -91,10 +91,14 @@ def etas_to_GM(etas_src='etas_src/kyushu_immediate2016-06-19_20:48:43_528251+00:
 	if not hasattr(ETAS_array, 'dtype'): ETAS_array = np.core.records.fromarrays(zip(*ETAS_array), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
 	if do_logz: ETAS_array['z']=numpy.log10(ETAS_array['z'])
 	#
+	#==============================================================================
+	ETAS_array = np.load('test_etas_rec.p')
+	#==============================================================================
+	#
 	if fignum!=None:
 		plt.figure(fignum)
 		plt.clf()
-		plot_xyz_image(ETAS_array, fignum=fignum, logz=False, needTranspose=False, cmap='jet')
+		plot_xyz_image(ETAS_array, fignum=fignum, logz=False, cmap='jet')
 		plt.title('ETAS rates')
 
 	#
@@ -115,7 +119,7 @@ def etas_to_GM(etas_src='etas_src/kyushu_immediate2016-06-19_20:48:43_528251+00:
 	#if isinstance(gmp_size,int) or isinstance(gmp_size,float): gmp_size=(gmp_size, gmp_size)
 	#
 	#
-	if etas_size == None: etas_size=(len(lons), len(lats))
+	if etas_size == None: etas_size=(len(lats), len(lons))
 	if gmp_size  == None: gmp_size=etas_size
 	if isinstance(gmp_size, int) or isinstance(gmp_size, float): gmp_size=[gmp_size, gmp_size]
 	if isinstance(etas_size, int) or isinstance(etas_size, float): etas_size=[etas_size, etas_size]
@@ -147,13 +151,14 @@ def etas_to_GM(etas_src='etas_src/kyushu_immediate2016-06-19_20:48:43_528251+00:
 	#
 	#d_lat_gmp = (max(lats)-min(lats))/gmp_size[1]
 	#d_lon_gmp = (max(lons)-min(lons))/gmp_size[0]
-	gmp_lat_range = (min(lats), max(lats), gmp_size[1])
-	gmp_lon_range = (min(lons), max(lons), gmp_size[0])
+	gmp_lat_range = (min(lats), max(lats), gmp_size[0])
+	gmp_lon_range = (min(lons), max(lons), gmp_size[1])
 	#
 	# Use observed earthquakes from the region to determine GR a and b values for rates.  Can specify b
 	bval, aval = regional_GR_rates(gmp_lon_range, gmp_lat_range, mc=4.5, date_range=['1990-1-1', None], b=-1)
 	#
 	ETAS_mag_rec, rates_array = ETAS_to_mags_and_rates(ETAS_rec, gmp_lon_range, gmp_lat_range, aval, bval)
+	print(ETAS_mag_rec)
 	#
 	#t0 = time.time()
 	#
@@ -192,8 +197,8 @@ def etas_to_GM(etas_src='etas_src/kyushu_immediate2016-06-19_20:48:43_528251+00:
 		GMPE_rec = np.core.records.fromarrays(zip(*[[x,y,z] for (x,y),z in zip(itertools.product(np.linspace(*gmp_lon_range), np.linspace(*gmp_lat_range)), resultses[0].get())]), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
 		#
 		for j,res in enumerate(resultses[1:]):
-			#GMPE_rec['z']+=np.array(res.get())
-			GMPE_rec['z'] = [max(z0,z1) for z0,z1 in zip(GMPE_rec['z'], res.get())]
+			GMPE_rec['z']+=np.array(res.get())
+			#GMPE_rec['z'] = [max(z0,z1) for z0,z1 in zip(GMPE_rec['z'], res.get())]
 			pass
 		#
 		# look in vc_parser for proper syntax using Pool() objects with close() and join().
@@ -203,7 +208,7 @@ def etas_to_GM(etas_src='etas_src/kyushu_immediate2016-06-19_20:48:43_528251+00:
 		# there are different ways to calculate GMPE. just so we can get a number, let's just aggregate the output for now.
 		#GMPE_rec = calc_max_GMPEs(ETAS_rec=ETAS_rec, lat_range=gmp_lat_range, lon_range=gmp_lon_range, m_reff=5.0, just_z=False)
 		# Wilson: Uses forumlae for rate of exceedence of a threshold acceleration, by default we use 0.2g 
-		GMPE_rec = calc_GMPEs_exceedance(ETAS_mag_rec=ETAS_mag_rec, rates_array=rates_array, lat_range=gmp_lat_range, lon_range=gmp_lon_range)
+		GMPE_rec = calc_GMPEs_exceedance(ETAS_mag_rec=ETAS_mag_rec, rates_array=rates_array, lon_range=gmp_lon_range, lat_range=gmp_lat_range)
 	#
 	#t1 = time.time()
 	#print(t1 - t0)
@@ -217,26 +222,12 @@ def etas_to_GM(etas_src='etas_src/kyushu_immediate2016-06-19_20:48:43_528251+00:
 	if fignum!=None:
 		plt.figure(fignum+1)
 		plt.clf()
-		plot_xyz_image(GMPE_rec, fignum=fignum+1, cmap='jet')
+		plot_xyz_image(GMPE_rec, fignum=fignum+1, logz=False, cmap='jet')
 		plt.title('Shaking rates')
 		
 	
 	return GMPE_rec
 #
-def ETAS_to_mags_and_rates(ETAS_rec, gm_lon_range, gm_lat_range, bval, aval, targetmag = 7.0):
-	#Return an array of rates from the magnitude inversion based on local GR
-	
-	#Get array of magnitudes
-	ETAS_mag_array = etas_rate_density_to_target_mag(ETAS_rec['z'], mc=2.5, targetMaxMag = targetmag, D=1.5, b=1.0, dm_bath=1.0, d_lambda=1.76, d_tau=2.3, p=1.1, q=1.5)
-	#Zip them up into a rec
-	ETAS_mag_rec = np.core.records.fromarrays(zip(*[[x,y,z] for (x,y),z in zip(itertools.product(np.linspace(*gm_lon_range), np.linspace(*gm_lat_range)), ETAS_mag_array)]), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
-	
-	total_cells = len(ETAS_mag_array)	
-	sorted_mags = sorted(ETAS_mag_array)
-	
-	rates_array = np.array([10**(-bval*mag+aval)/(total_cells-sorted_mags.index(mag)) for mag in ETAS_mag_array])
-	
-	return ETAS_mag_rec, rates_array	
 #	
 def calc_max_GMPEs(ETAS_rec=None, lat_range=None, lon_range=None, mc=2.5, m_reff=5.0, motion_type="PGA-soil", just_z=False):
 	# what is the correct syntax to return a subset of columns of a recarray? (the fastest way, of course)?
@@ -292,13 +283,14 @@ def calc_max_GMPEs(ETAS_rec=None, lat_range=None, lon_range=None, mc=2.5, m_reff
 		return GMPE_rec
 #
 #
-def calc_GMPEs_exceedance(ETAS_mag_rec=None, rates_array=None, lat_range=None, lon_range=None, m_reff=0., mc=2.5, threshold= 0.2, motion_type="PGA-soil", just_z=False):
+def calc_GMPEs_exceedance(ETAS_mag_rec=None, rates_array=None, lon_range=None, lat_range=None, m_reff=0., mc=2.5, threshold= 0.2, motion_type="PGA-soil", just_z=False):
 	#
 	# construct GMP array and calculate GM from ETAS. this function to be used as an mpp.Pool() worker.
 	#GMPE_rec =[[x,y,0.] for x,y in itertools.product(np.arange(*lon_range), np.arange(*lat_range))]	# check these for proper
 	#
 	# create an empty GMPE array.																		# sequenceing and grouping.
 	#GMPE_rec = np.core.records.fromarrays(zip(*[[x,y,0.] for x,y in itertools.product(np.arange(*lon_range), np.arange(*lat_range))]), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
+	
 	GMPE_rec = np.core.records.fromarrays(zip(*[[x,y,0.] for x,y in itertools.product(np.linspace(*lon_range), np.linspace(*lat_range))]), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
 	#
 	#d_lat = (lat_range[1]-lat_range[0])/lat_range[2]
@@ -354,6 +346,26 @@ def f_Y(R,M, a=None, b=None, c1=None, c2=None, d=None, e=None, sig=None, motion_
 def C(M, c1, c2):
     return c1*np.exp(c2*(M-5))*(np.arctan(M-5)+np.pi/2.0)
 #
+#
+def ETAS_to_mags_and_rates(ETAS_rec, gm_lon_range, gm_lat_range, bval, aval, targetmag = 7.0):
+	#Return an array of rates from the magnitude inversion based on local GR
+	#
+	#make sure the 'zs' line up with x,y when rebuilding rec
+	ETAS_rec.sort(order='y')
+	ETAS_rec.sort(order='x')
+	#Get array of magnitudes
+	ETAS_mag_array = etas_rate_density_to_target_mag(ETAS_rec['z'], mc=2.5, targetMaxMag = targetmag, D=1.5, b=1.0, dm_bath=1.0, d_lambda=1.76, d_tau=2.3, p=1.1, q=1.5)
+	#Zip them up into a rec
+	ETAS_mag_rec = np.core.records.fromarrays(zip(*[[x,y,z] for (x,y),z in zip(itertools.product(np.linspace(*gm_lon_range), np.linspace(*gm_lat_range)), ETAS_mag_array)]), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
+	#	
+	total_cells = len(ETAS_mag_array)	
+	sorted_mags = sorted(ETAS_mag_array)
+	#
+	rates_array = np.array([10**(-bval*mag+aval)/(total_cells-sorted_mags.index(mag)) for mag in ETAS_mag_array])
+	#
+	return ETAS_mag_rec, rates_array
+#
+#	
 def etas_to_mag_rate(z_etas, area=100, t0=0., t1=0., t2=0., p=1.05, dm=1.0, mc=2.5):
 	# m = log(N) + dm + mc
 	#returns (magnitude, annual rate)
@@ -416,7 +428,7 @@ def regional_GR_rates(lon_bounds, lat_bounds, mc=4.5, date_range=['1990-1-1', No
 	t_days = t_seconds/24./3600.
 	
 	catalog = pull_region_history(lon_range=lon_bounds, lat_range=lat_bounds, mc=mc, date_range=date_range)
-	
+
 	cat_mag_array = catalog['mag']
 
 	hist, binEdges = np.histogram(cat_mag_array, 50)
@@ -428,8 +440,8 @@ def regional_GR_rates(lon_bounds, lat_bounds, mc=4.5, date_range=['1990-1-1', No
 	for count in hist:
 		gr_count.append(total_events - cumsum)
 		cumsum += count
-	
-	freq = np.array(gr_count)/t_days
+
+	freq = np.array(gr_count)/t_years
 	logFreq = np.log10(freq)
 	
 	#Get center of bins
@@ -457,11 +469,13 @@ def int_log_norm(Y, threshold, motion_type):
 def normal_integrand(x, mean, sig):
 	return 1./(np.sqrt(2*np.pi)*sig)*np.exp(-((x-mean)/sig)**2/2.)
 #
-def plot_xyz_image(xyz, fignum=0, logz=True, needTranspose=True, interp_type='nearest', cmap='jet', do_map=True):
+def plot_xyz_image(xyz, fignum=0, logz=True, needTranspose=False, interp_type='nearest', cmap='jet', do_map=True):
 	#
 	if not hasattr(xyz, 'dtype'):
 		xyz = numpy.core.records.fromarrays(zip(*xyz), dtype=[('x','>f8'), ('y','>f8'), ('z','>f8')])
 	#
+	xyz.sort(order='x')
+	xyz.sort(order='y')
 	X = sorted(list(set(xyz['x'])))
 	Y = sorted(list(set(xyz['y'])))
 	mgx, mgy = np.meshgrid(X, Y)
@@ -482,11 +496,11 @@ def plot_xyz_image(xyz, fignum=0, logz=True, needTranspose=True, interp_type='ne
 	
 	plt.figure(fignum)
 	plt.clf()
-	plt.imshow(numpy.flipud(zz.transpose()), interpolation=interp_type, cmap=cmap)
+	#plt.imshow(numpy.flipud(zz.transpose()), interpolation=interp_type, cmap=cmap)
 	#plt.colorbar()
 	#
 	if do_map:
-		m = Basemap(projection='cyl', llcrnrlat=Y[0], urcrnrlat=Y[-1], llcrnrlon=X[0], urcrnrlon=X[-1], resolution='i')
+		m = Basemap(projection='cyl', llcrnrlat=min(Y), urcrnrlat=max(Y), llcrnrlon=min(X), urcrnrlon=max(X), resolution='i')
 		m.drawcoastlines()
 		m.drawmapboundary()#fill_color='PaleTurquoise')
 		#m.fillcontinents(color='lemonchiffon',lake_color='PaleTurquoise', zorder=0)
@@ -539,7 +553,8 @@ def interpolate_etas_test(etas_data='etas_src/etas_japan_20160419_2148CDT_xyz.xy
 	#
 	return data_interp
 
-def interpolate_scipy(data,new_size=.5, interp_type='cubic', lon1=None, lon2=None, lat1=None, lat2=None, fignum=None, cmap='hot'):
+def interpolate_scipy(data, new_size=.5, interp_type='cubic', lon1=None, lon2=None, lat1=None, lat2=None, fignum=None, cmap='hot'):
+	
 	allLons = [x for x,y,z in data]
 	allLats = [y for x,y,z in data]
 	lons = sorted(list(set(allLons)))
@@ -713,9 +728,16 @@ if __name__=='__main__':
 	kwds['etas_src']='etas_src/kyushu_immediate2016-06-19_20:48:43_528251+00:00_xyz.xyz'
 	kwds['maxMag'] = 7.0
 	kwds['fignum']=0
-	kwds['n_procs']=4
+	kwds['n_procs']=1
 	#
+	#=====================================================
+	Test_etas_rec = np.core.records.fromarrays(zip(*[[x,y,z] for (x,y),z in zip(itertools.product(np.linspace(*[5,10,6]), np.linspace(*[0,9,10])), -9.2519929379482324*np.ones(100))]), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
 	#
+	Test_etas_rec[38]['z'] = -5.9992813172122945
+	Test_etas_rec.dump('test_etas_rec.p')
+	#=====================================================
+	
+	
 	X=etas_to_GM(*pargs, **kwds)
 else:
 	plt.ion()
