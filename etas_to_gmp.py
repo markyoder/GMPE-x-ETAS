@@ -68,7 +68,7 @@ motion_type_prams = {key:{ky:vl for ky,vl in zip(motion_type_prams_lst_vars, val
 #print('mtp: ', motion_type_prams)
 #
 #
-def etas_to_GM(etas_src='etas_src/kyushu_immediate2016-06-19_20:48:43_528251+00:00_xyz.xyz', fname_out='GMPE_rec.p', motion_type='PGA-soil', maxMag = 7.0, etas_size=None, gmp_size=None, n_procs=None, do_logz=True, fignum=None):
+def etas_to_GM(etas_src='etas_src/kyushu_immediate2016-06-19_20:48:43_528251+00:00_xyz.xyz', fname_out='GMPE_rec.p', motion_type='PGA-soil', maxMag = 7.0, percSource = 0.33, etas_size=None, gmp_size=None, n_procs=None, do_logz=True, fignum=None):
 	# "ETAS to Ground-Motion:
 	# etas_size: if None, use raw data as they are. otherwise, re-size the lattice using scipy interpolation tools (grid_data() i think)
 	# gmp_size: if None, use raw (etas) data size, otherwise, create a grid... and for these two variables, we need to decide if we want
@@ -91,9 +91,6 @@ def etas_to_GM(etas_src='etas_src/kyushu_immediate2016-06-19_20:48:43_528251+00:
 	if not hasattr(ETAS_array, 'dtype'): ETAS_array = np.core.records.fromarrays(zip(*ETAS_array), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
 	if do_logz: ETAS_array['z']=numpy.log10(ETAS_array['z'])
 	#
-	#==============================================================================
-	ETAS_array = np.load('test_etas_rec.p')
-	#==============================================================================
 	#
 	if fignum!=None:
 		plt.figure(fignum)
@@ -147,7 +144,6 @@ def etas_to_GM(etas_src='etas_src/kyushu_immediate2016-06-19_20:48:43_528251+00:
 	d_lat = lats[1]-lats[0]		# maybe need something more robust than this, but it should do...
 	lon_range = (min(lons), max(lons)+d_lon, d_lon)
 	lat_range = (min(lats), max(lats)+d_lat, d_lat)
-	l_etas = len(ETAS_rec)
 	#
 	#d_lat_gmp = (max(lats)-min(lats))/gmp_size[1]
 	#d_lon_gmp = (max(lons)-min(lons))/gmp_size[0]
@@ -155,12 +151,19 @@ def etas_to_GM(etas_src='etas_src/kyushu_immediate2016-06-19_20:48:43_528251+00:
 	gmp_lon_range = (min(lons), max(lons), gmp_size[1])
 	#
 	# Use observed earthquakes from the region to determine GR a and b values for rates.  Can specify b
-	bval, aval = regional_GR_rates(gmp_lon_range, gmp_lat_range, mc=4.5, date_range=['1990-1-1', None], b=-1)
+	bval, aval = regional_GR_rates(gmp_lon_range, gmp_lat_range, mc=4.5, date_range=['1990-1-1', None], b=1)
 	#
 	ETAS_mag_rec, rates_array = ETAS_to_mags_and_rates(ETAS_rec, gmp_lon_range, gmp_lat_range, aval, bval)
-	print(ETAS_mag_rec)
 	#
 	#t0 = time.time()
+	#
+	# Let's only use the top x% of ETAS cells as shaking sources. 
+	# The lowest rates will correspond to the highest magnitudes.
+	sorted_ETAS_mag_rec = np.sort(ETAS_mag_rec, order='z')
+	sorted_rates_array = np.sort(rates_array)
+	forCalc_ETAS_mag_rec = sorted_ETAS_mag_rec[-int(len(ETAS_mag_rec)*percSource):]
+	forCalc_rates_array = sorted_rates_array[:int(len(ETAS_mag_rec)*percSource)]
+	l_etas = len(forCalc_ETAS_mag_rec)
 	#
 	# now, we want both SPP and parallel options. SPP should be as much like MPP with one processor as possible, but avoiding the
 	# overhead of piping all the data back and forth.
@@ -184,7 +187,7 @@ def etas_to_GM(etas_src='etas_src/kyushu_immediate2016-06-19_20:48:43_528251+00:
 		#
 		#resultses = [P.apply_async(calc_max_GMPEs, (), {'ETAS_rec':ETAS_rec[j_p*chunk_size:(j_p+1)*chunk_size], 'lon_range':gmp_lon_range, 'lat_range':gmp_lat_range, 'm_reff':5.0, 'just_z':True}) for j_p in range(n_procs)]
 		#
-		resultses = [P.apply_async(calc_GMPEs_exceedance, (), {'ETAS_mag_rec':ETAS_mag_rec[j_p*chunk_size:(j_p+1)*chunk_size], 'rates_array':rates_array[j_p*chunk_size:(j_p+1)*chunk_size], 'lon_range':gmp_lon_range, 'lat_range':gmp_lat_range, 'm_reff':0, 'just_z':True}) for j_p in range(n_procs)]
+		resultses = [P.apply_async(calc_GMPEs_exceedance, (), {'ETAS_mag_rec':forCalc_ETAS_mag_rec[j_p*chunk_size:(j_p+1)*chunk_size], 'rates_array':forCalc_rates_array[j_p*chunk_size:(j_p+1)*chunk_size], 'lon_range':gmp_lon_range, 'lat_range':gmp_lat_range, 'm_reff':0, 'just_z':True}) for j_p in range(n_procs)]
 		#
 		P.close()
 		P.join()
@@ -208,7 +211,7 @@ def etas_to_GM(etas_src='etas_src/kyushu_immediate2016-06-19_20:48:43_528251+00:
 		# there are different ways to calculate GMPE. just so we can get a number, let's just aggregate the output for now.
 		#GMPE_rec = calc_max_GMPEs(ETAS_rec=ETAS_rec, lat_range=gmp_lat_range, lon_range=gmp_lon_range, m_reff=5.0, just_z=False)
 		# Wilson: Uses forumlae for rate of exceedence of a threshold acceleration, by default we use 0.2g 
-		GMPE_rec = calc_GMPEs_exceedance(ETAS_mag_rec=ETAS_mag_rec, rates_array=rates_array, lon_range=gmp_lon_range, lat_range=gmp_lat_range)
+		GMPE_rec = calc_GMPEs_exceedance(ETAS_mag_rec=forCalc_ETAS_mag_rec, rates_array=forCalc_rates_array, lon_range=gmp_lon_range, lat_range=gmp_lat_range)
 	#
 	#t1 = time.time()
 	#print(t1 - t0)
@@ -222,7 +225,7 @@ def etas_to_GM(etas_src='etas_src/kyushu_immediate2016-06-19_20:48:43_528251+00:
 	if fignum!=None:
 		plt.figure(fignum+1)
 		plt.clf()
-		plot_xyz_image(GMPE_rec, fignum=fignum+1, logz=False, cmap='jet')
+		plot_xyz_image(GMPE_rec, fignum=fignum+1, logz=True, cmap='jet')
 		plt.title('Shaking rates')
 		
 	
@@ -321,7 +324,7 @@ def calc_GMPEs_exceedance(ETAS_mag_rec=None, rates_array=None, lon_range=None, l
 		# Threshold given in g's, cue-heaton eqns give accels in cm/s2. 
 		Prob_exceed = int_log_norm(S_Horiz_Soil_Acc, threshold*980.665, motion_type)
 		#
-		rate_exceed = Prob_exceed*rate
+		rate_exceed = Prob_exceed*1.0#rate
 		#
 		GMPE_rec['z'][k] += rate_exceed
 				
@@ -727,17 +730,10 @@ if __name__=='__main__':
 	#
 	kwds['etas_src']='etas_src/kyushu_immediate2016-06-19_20:48:43_528251+00:00_xyz.xyz'
 	kwds['maxMag'] = 7.0
-	kwds['fignum']=0
-	kwds['n_procs']=1
-	#
-	#=====================================================
-	Test_etas_rec = np.core.records.fromarrays(zip(*[[x,y,z] for (x,y),z in zip(itertools.product(np.linspace(*[5,10,6]), np.linspace(*[0,9,10])), -9.2519929379482324*np.ones(100))]), dtype = [('x', '>f8'), ('y', '>f8'), ('z', '>f8')])
-	#
-	Test_etas_rec[38]['z'] = -5.9992813172122945
-	Test_etas_rec.dump('test_etas_rec.p')
-	#=====================================================
-	
-	
+	kwds['percSource'] = 0.33
+	kwds['fignum']=2
+	kwds['n_procs']=4
+	#	
 	X=etas_to_GM(*pargs, **kwds)
 else:
 	plt.ion()
